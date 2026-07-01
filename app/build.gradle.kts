@@ -11,6 +11,19 @@ plugins {
 val ciVersionCode = (project.findProperty("appVersionCode") as String?)?.toIntOrNull() ?: 1
 val ciVersionName = project.findProperty("appVersionName") as String? ?: "1.0"
 
+// Real release signing is only available where these properties are set (populated by
+// CI from GitHub Actions secrets — see android-build.yml). They're absent for local
+// developer builds and for pull_request runs from forks, which fall back to debug
+// signing below so the build still succeeds.
+val releaseStoreFile = project.findProperty("releaseStoreFile") as String?
+val releaseStorePassword = project.findProperty("releaseStorePassword") as String?
+val releaseKeyAlias = project.findProperty("releaseKeyAlias") as String?
+val releaseKeyPassword = project.findProperty("releaseKeyPassword") as String?
+val hasReleaseSigningConfig = !releaseStoreFile.isNullOrBlank() &&
+    !releaseStorePassword.isNullOrBlank() &&
+    !releaseKeyAlias.isNullOrBlank() &&
+    !releaseKeyPassword.isNullOrBlank()
+
 android {
     namespace = "com.watchocr.app"
     compileSdk = 34
@@ -23,14 +36,30 @@ android {
         versionName = ciVersionName
     }
 
+    signingConfigs {
+        if (hasReleaseSigningConfig) {
+            create("release") {
+                storeFile = file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Optimized build, but debug-signed so CI can produce an installable/upgradable APK
-            // without managing a release keystore.
-            signingConfig = signingConfigs.getByName("debug")
+            // Real release signing when CI has access to the release keystore secrets;
+            // otherwise fall back to debug signing (local builds, fork PRs) so the
+            // build still produces an installable APK without failing.
+            signingConfig = if (hasReleaseSigningConfig) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 

@@ -9,6 +9,10 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # secrets can't be referenced directly in `if:` conditions, so mirror the
+      # existence check into an env var here where step `if:` conditions can read it.
+      HAS_RELEASE_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +30,47 @@ jobs:
         with:
           gradle-version: "8.7"
 
+      # AGP's auto-generated debug keystore lives at ~/.android/debug.keystore.
+      # GitHub Actions runners start from a clean VM every run, so without caching
+      # it here a *new* debug key would be generated on every build, making each
+      # release APK's signature incompatible with the previously installed one.
+      - name: Cache debug keystore
+        id: debug-keystore-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: android-debug-keystore-v1
+
+      - name: Generate debug keystore
+        if: steps.debug-keystore-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/.android
+          keytool -genkeypair -v \
+            -keystore ~/.android/debug.keystore \
+            -storepass android -keypass android \
+            -alias androiddebugkey -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      # Decode the release keystore secret to a file outside the repo working tree so it
+      # can never end up in a git diff/artifact. Skipped when the secret isn't available
+      # to this workflow run (e.g. fork pull_request builds), in which case
+      # app/build.gradle.kts falls back to debug signing.
+      - name: Decode release keystore
+        id: release-keystore
+        if: ${{ env.HAS_RELEASE_KEYSTORE == 'true' }}
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          KEYSTORE_PATH="$RUNNER_TEMP/watchocr-release.jks"
+          echo "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$KEYSTORE_PATH"
+          echo "keystore-path=$KEYSTORE_PATH" >> "$GITHUB_OUTPUT"
+
       - name: Assemble release APK
+        env:
+          ORG_GRADLE_PROJECT_releaseStoreFile: ${{ steps.release-keystore.outputs.keystore-path }}
+          ORG_GRADLE_PROJECT_releaseStorePassword: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          ORG_GRADLE_PROJECT_releaseKeyAlias: ${{ secrets.RELEASE_KEY_ALIAS }}
+          ORG_GRADLE_PROJECT_releaseKeyPassword: ${{ secrets.RELEASE_KEY_PASSWORD }}
         run: >
           gradle assembleRelease --no-daemon
           -PappVersionCode=${{ github.run_number }}
@@ -35,5 +79,5 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: watchocr-debug
+          name: ${{ env.HAS_RELEASE_KEYSTORE == 'true' && 'watchocr-release' || 'watchocr-debug' }}
           path: app/build/outputs/apk/release/WatchOCR.apk
