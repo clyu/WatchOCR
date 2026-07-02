@@ -38,6 +38,9 @@ class DirectoryMonitorService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
 
+    /** Last processing error, kept visible in the idle notification until a file succeeds. */
+    private var lastErrorText: String? = null
+
     override fun onCreate() {
         super.onCreate()
         val notification = buildNotification("Watching for new images…")
@@ -135,14 +138,15 @@ class DirectoryMonitorService : Service() {
             val result = OcrProcessor.processImage(applicationContext, file.uri, apiKey, model)
             result.onSuccess {
                 dao.markProcessed(uriString)
+                lastErrorText = null
             }.onFailure {
                 dao.incrementFailedAttempts(uriString)
-                updateNotification("Failed to process ${file.name}: ${it.message}")
+                lastErrorText = "Failed to process ${file.name}: ${it.message}"
             }
         }
 
         if (!isBaselineRun) {
-            updateNotification("Watching for new images…")
+            updateNotification(lastErrorText ?: "Watching for new images…")
         }
         return true
     }
@@ -165,6 +169,7 @@ class DirectoryMonitorService : Service() {
         return NotificationCompat.Builder(this, NotificationChannels.MONITOR_CHANNEL_ID)
             .setContentTitle("WatchOCR")
             .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.ic_menu_camera)
             .setOngoing(true)
             .build()
