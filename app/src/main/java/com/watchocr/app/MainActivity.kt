@@ -2,6 +2,7 @@ package com.watchocr.app
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -9,6 +10,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -21,6 +27,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -34,7 +42,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.watchocr.app.data.AppSettings
@@ -67,6 +77,7 @@ fun WatchOcrApp() {
 
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var isProcessing by remember { mutableStateOf(false) }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -107,40 +118,64 @@ fun WatchOcrApp() {
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
-            NavigationBar {
-                NavigationBarItem(
-                    selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Icon(Icons.Default.History, contentDescription = null) },
-                    label = { Text("History") }
-                )
-                NavigationBarItem(
-                    selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                    label = { Text("Settings") }
-                )
-            }
-        },
-        floatingActionButton = {
-            if (selectedTab == 0) {
-                FloatingActionButton(onClick = { pickImageLauncher.launch(arrayOf("image/*")) }) {
-                    if (isProcessing) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    } else {
-                        Icon(Icons.Default.Add, contentDescription = "Add image")
-                    }
+            if (!isLandscape) {
+                NavigationBar {
+                    NavigationBarItem(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Icon(Icons.Default.History, contentDescription = null) },
+                        label = { Text("History") }
+                    )
+                    NavigationBarItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        label = { Text("Settings") }
+                    )
                 }
             }
         }
     ) { padding ->
-        Box(modifier = Modifier.padding(padding)) {
-            when (selectedTab) {
-                0 -> HistoryScreen()
-                else -> SettingsScreen(settingsDataStore = settingsDataStore, settings = settings)
+        Row(modifier = Modifier.padding(padding).fillMaxSize()) {
+            Box(modifier = Modifier.weight(1f)) {
+                when (selectedTab) {
+                    0 -> HistoryScreen()
+                    else -> SettingsScreen(settingsDataStore = settingsDataStore, settings = settings)
+                }
+                if (selectedTab == 0) {
+                    FloatingActionButton(
+                        onClick = { pickImageLauncher.launch(arrayOf("image/*")) },
+                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+                    ) {
+                        if (isProcessing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        } else {
+                            Icon(Icons.Default.Add, contentDescription = "Add image")
+                        }
+                    }
+                }
+            }
+            if (isLandscape) {
+                NavigationRail(modifier = Modifier.fillMaxHeight()) {
+                    Spacer(modifier = Modifier.weight(1f))
+                    NavigationRailItem(
+                        selected = selectedTab == 0,
+                        onClick = { selectedTab = 0 },
+                        icon = { Icon(Icons.Default.History, contentDescription = null) },
+                        label = { Text("History") }
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    NavigationRailItem(
+                        selected = selectedTab == 1,
+                        onClick = { selectedTab = 1 },
+                        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        label = { Text("Settings") }
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                }
             }
         }
     }
