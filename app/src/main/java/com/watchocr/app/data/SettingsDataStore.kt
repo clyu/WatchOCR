@@ -2,6 +2,7 @@ package com.watchocr.app.data
 
 import android.content.Context
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -18,7 +19,9 @@ data class AppSettings(
     /** Images added to MediaStore before this time are ignored. */
     val watchStartMillis: Long = 0L,
     val apiKey: String = "",
-    val model: String = "gemini-3.1-flash-lite"
+    val model: String = "gemini-3.1-flash-lite",
+    /** OCR results older than this many days are deleted automatically; 0 = keep forever. */
+    val retentionDays: Int = 0
 )
 
 class SettingsDataStore(private val context: Context) {
@@ -29,6 +32,7 @@ class SettingsDataStore(private val context: Context) {
         val WATCH_START_MILLIS = longPreferencesKey("watch_start_millis")
         val API_KEY = stringPreferencesKey("api_key")
         val MODEL = stringPreferencesKey("model")
+        val RETENTION_DAYS = intPreferencesKey("retention_days")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -37,7 +41,8 @@ class SettingsDataStore(private val context: Context) {
             bucketName = prefs[Keys.BUCKET_NAME],
             watchStartMillis = prefs[Keys.WATCH_START_MILLIS] ?: 0L,
             apiKey = prefs[Keys.API_KEY] ?: "",
-            model = prefs[Keys.MODEL] ?: "gemini-3.1-flash-lite"
+            model = prefs[Keys.MODEL] ?: "gemini-3.1-flash-lite",
+            retentionDays = prefs[Keys.RETENTION_DAYS] ?: 0
         )
     }
 
@@ -56,5 +61,9 @@ class SettingsDataStore(private val context: Context) {
 
     suspend fun setModel(model: String) {
         context.dataStore.edit { it[Keys.MODEL] = model }
+    }
+
+    suspend fun setRetentionDays(days: Int) {
+        context.dataStore.edit { it[Keys.RETENTION_DAYS] = days }
     }
 }

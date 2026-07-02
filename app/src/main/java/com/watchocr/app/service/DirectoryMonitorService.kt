@@ -14,6 +14,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.watchocr.app.NotificationChannels
 import com.watchocr.app.data.AppDatabase
+import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.MonitoredFile
 import com.watchocr.app.data.SettingsDataStore
@@ -43,6 +44,8 @@ class DirectoryMonitorService : Service() {
 
     /** Last processing error, kept visible in the idle notification until a file succeeds. */
     private var lastErrorText: String? = null
+
+    private var lastCleanupMillis = 0L
 
     /** Signalled by [contentObserver] whenever the images collection changes. */
     private val changeSignal = Channel<Unit>(Channel.CONFLATED)
@@ -105,6 +108,14 @@ class DirectoryMonitorService : Service() {
 
             try {
                 scanBucket(bucketId, settings.watchStartMillis, settings.apiKey, settings.model, db)
+
+                // Long-running service: enforce the history retention setting
+                // periodically, so it applies even when the app UI is never opened.
+                val now = System.currentTimeMillis()
+                if (now - lastCleanupMillis >= CLEANUP_INTERVAL_MS) {
+                    HistoryCleanup.deleteOlderThan(applicationContext, settings.retentionDays)
+                    lastCleanupMillis = now
+                }
             } catch (e: Exception) {
                 updateNotification("Monitor error: ${e.message}")
             }
@@ -191,6 +202,8 @@ class DirectoryMonitorService : Service() {
 
         /** A failed file is retried on later scans at most this many times. */
         private const val MAX_RETRIES = 3
+
+        private const val CLEANUP_INTERVAL_MS = 60 * 60 * 1000L
 
         // The ContentObserver is the primary trigger on Q+, where this sweep is
         // only a safety net. Pre-Q it also drives the size-stability check, so

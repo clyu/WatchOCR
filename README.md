@@ -8,7 +8,7 @@ An Android app that watches a folder for new screenshots/images, runs each one t
 - **Manual import**: pick a single image from the History tab at any time, independent of the watched folder.
 - **OCR + translation + analysis**: each image is sent to the Gemini API, which returns the extracted text, a Traditional Chinese translation, and explanations for any idioms/slang, via a structured JSON response schema.
 - **History**: a scrollable list of past results with the source thumbnail, timestamp, extracted text (tap to copy), translation, and idiom/slang analysis. Newly arrived results automatically scroll into view.
-- **Local persistence**: OCR results and images are stored on-device (Room database + app-private file storage); nothing is uploaded except the image data sent to the Gemini API for processing.
+- **Local persistence**: OCR results and images are stored on-device (Room database + app-private file storage); nothing is uploaded except the image data sent to the Gemini API for processing. History can be auto-deleted after 1/7/30 days (default: kept forever) or cleared immediately from Settings.
 
 ## How it works
 

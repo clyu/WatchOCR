@@ -22,9 +22,14 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Divider
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -44,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.watchocr.app.data.AppDatabase
 import com.watchocr.app.data.AppSettings
+import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.ImageBucket
 import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.SettingsDataStore
@@ -60,6 +66,15 @@ private val mediaImagesPermission: String
         Manifest.permission.READ_EXTERNAL_STORAGE
     }
 
+/** Auto-delete choices: days to keep OCR results, 0 = keep forever. */
+private val retentionOptions = listOf(
+    0 to "Never",
+    1 to "After 1 day",
+    7 to "After 7 days",
+    30 to "After 30 days"
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) {
     val context = LocalContext.current
@@ -75,6 +90,8 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
 
     // Non-null while the folder picker dialog is showing.
     var pickerBuckets by remember { mutableStateOf<List<ImageBucket>?>(null) }
+    var showClearConfirm by remember { mutableStateOf(false) }
+    var retentionMenuExpanded by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         if (!seededFromStore) {
@@ -156,6 +173,67 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             label = { Text("Model") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
+        )
+
+        Divider()
+
+        Text("Auto-delete History", style = MaterialTheme.typography.titleMedium)
+        ExposedDropdownMenuBox(
+            expanded = retentionMenuExpanded,
+            onExpandedChange = { retentionMenuExpanded = it }
+        ) {
+            OutlinedTextField(
+                value = retentionOptions.firstOrNull { it.first == settings.retentionDays }?.second
+                    ?: retentionOptions.first().second,
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                label = { Text("Delete results") },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = retentionMenuExpanded) },
+                modifier = Modifier
+                    .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                    .fillMaxWidth()
+            )
+            ExposedDropdownMenu(
+                expanded = retentionMenuExpanded,
+                onDismissRequest = { retentionMenuExpanded = false }
+            ) {
+                retentionOptions.forEach { (days, label) ->
+                    DropdownMenuItem(
+                        text = { Text(label) },
+                        onClick = {
+                            retentionMenuExpanded = false
+                            scope.launch {
+                                settingsDataStore.setRetentionDays(days)
+                                HistoryCleanup.deleteOlderThan(context, days)
+                            }
+                        }
+                    )
+                }
+            }
+        }
+        Button(onClick = { showClearConfirm = true }) {
+            Text("Clear History Now")
+        }
+    }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("Clear all history?") },
+            text = { Text("All OCR results and their saved images will be deleted. This cannot be undone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearConfirm = false
+                    scope.launch {
+                        HistoryCleanup.clearAll(context)
+                        Toast.makeText(context, "History cleared", Toast.LENGTH_SHORT).show()
+                    }
+                }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) { Text("Cancel") }
+            }
         )
     }
 

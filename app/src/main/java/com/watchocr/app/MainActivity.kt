@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchocr.app.data.AppSettings
+import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.service.DirectoryMonitorService
 import com.watchocr.app.ui.HistoryScreen
@@ -99,6 +100,10 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
         if (settings.bucketId != null && settings.apiKey.isNotBlank()) {
             DirectoryMonitorService.start(context)
         }
+    }
+
+    LaunchedEffect(settings.retentionDays) {
+        HistoryCleanup.deleteOlderThan(context, settings.retentionDays)
     }
 
     val pickImageLauncher = rememberLauncherForActivityResult(
