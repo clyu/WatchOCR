@@ -55,6 +55,7 @@ class DirectoryMonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        createNotificationChannel()
         val notification = buildNotification("Watching for new images…")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -162,14 +163,16 @@ class DirectoryMonitorService : Service() {
         updateNotification(lastErrorText ?: "Watching for new images…")
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun createNotificationChannel() {
         val channel = android.app.NotificationChannel(
             NotificationChannels.MONITOR_CHANNEL_ID,
             "Directory Monitor",
             NotificationManager.IMPORTANCE_LOW
         )
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
 
+    private fun buildNotification(text: String): Notification {
         return NotificationCompat.Builder(this, NotificationChannels.MONITOR_CHANNEL_ID)
             .setContentTitle("WatchOCR")
             .setContentText(text)
