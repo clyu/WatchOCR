@@ -47,9 +47,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchocr.app.data.AppSettings
 import com.watchocr.app.data.SettingsDataStore
-import com.watchocr.app.ocr.OcrProcessor
 import com.watchocr.app.service.DirectoryMonitorService
 import com.watchocr.app.ui.HistoryScreen
 import com.watchocr.app.ui.SettingsScreen
@@ -68,7 +68,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun WatchOcrApp() {
+fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     val context = LocalContext.current
     val settingsDataStore = remember { SettingsDataStore(context) }
     val settings by settingsDataStore.settingsFlow.collectAsState(initial = AppSettings())
@@ -76,8 +76,12 @@ fun WatchOcrApp() {
     val snackbarHostState = remember { SnackbarHostState() }
 
     var selectedTab by rememberSaveable { mutableStateOf(0) }
-    var isProcessing by remember { mutableStateOf(false) }
+    val isProcessing by ocrViewModel.isProcessing.collectAsState()
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+
+    LaunchedEffect(Unit) {
+        ocrViewModel.errors.collect { snackbarHostState.showSnackbar(it) }
+    }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -105,15 +109,7 @@ fun WatchOcrApp() {
             scope.launch { snackbarHostState.showSnackbar("Please set your Gemini API key in Settings first.") }
             return@rememberLauncherForActivityResult
         }
-        scope.launch {
-            isProcessing = true
-            val result = OcrProcessor.processImage(context, uri, settings.apiKey, settings.model)
-            isProcessing = false
-            result.onFailure {
-                val reason = it.message.orEmpty().ifBlank { it.javaClass.simpleName }.take(200)
-                snackbarHostState.showSnackbar("OCR failed: $reason")
-            }
-        }
+        ocrViewModel.processImage(uri, settings.apiKey, settings.model)
     }
 
     Scaffold(
