@@ -11,6 +11,8 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "watchocr_settings")
 
+private const val DEFAULT_MODEL = "gemini-3.1-flash-lite"
+
 data class AppSettings(
     /** MediaStore bucket (folder) to watch, or null if none selected. */
     val bucketId: Long? = null,
@@ -19,7 +21,7 @@ data class AppSettings(
     /** Images added to MediaStore before this time are ignored. */
     val watchStartMillis: Long = 0L,
     val apiKey: String = "",
-    val model: String = "gemini-3.1-flash-lite",
+    val model: String = DEFAULT_MODEL,
     /** OCR results older than this many days are deleted automatically; 0 = keep forever. */
     val retentionDays: Int = 0
 )
@@ -41,7 +43,7 @@ class SettingsDataStore(private val context: Context) {
             bucketName = prefs[Keys.BUCKET_NAME],
             watchStartMillis = prefs[Keys.WATCH_START_MILLIS] ?: 0L,
             apiKey = prefs[Keys.API_KEY] ?: "",
-            model = prefs[Keys.MODEL] ?: "gemini-3.1-flash-lite",
+            model = prefs[Keys.MODEL] ?: DEFAULT_MODEL,
             retentionDays = prefs[Keys.RETENTION_DAYS] ?: 0
         )
     }
