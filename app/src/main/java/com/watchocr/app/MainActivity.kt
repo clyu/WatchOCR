@@ -51,6 +51,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchocr.app.data.AppSettings
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.SettingsDataStore
+import com.watchocr.app.ocr.OcrProcessor
 import com.watchocr.app.service.DirectoryMonitorService
 import com.watchocr.app.ui.HistoryScreen
 import com.watchocr.app.ui.SettingsScreen
@@ -77,7 +78,11 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     val snackbarHostState = remember { SnackbarHostState() }
 
     var selectedTab by rememberSaveable { mutableStateOf(0) }
-    val isProcessing by ocrViewModel.isProcessing.collectAsState()
+    val isManualProcessing by ocrViewModel.isProcessing.collectAsState()
+    val ocrJobs by OcrProcessor.activeJobs.collectAsState()
+    // Manual imports and the directory-monitor service both run OCR through
+    // OcrProcessor; either should show the in-flight spinner on the FAB.
+    val isProcessing = isManualProcessing || ocrJobs > 0
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     LaunchedEffect(Unit) {

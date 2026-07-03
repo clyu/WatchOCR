@@ -9,6 +9,10 @@ import com.watchocr.app.data.AppDatabase
 import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.network.GeminiClient
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -21,6 +25,15 @@ object OcrProcessor {
     private const val MAX_UPLOAD_BYTES = 4 * 1024 * 1024
     private const val JPEG_QUALITY = 85
 
+    private val _activeJobs = MutableStateFlow(0)
+
+    /**
+     * Number of OCR requests currently in flight, from either the manual
+     * import flow or [com.watchocr.app.service.DirectoryMonitorService].
+     * The UI shows a progress indicator while this is above zero.
+     */
+    val activeJobs: StateFlow<Int> = _activeJobs.asStateFlow()
+
     /**
      * Reads the image at [uri], downscales it if oversized, runs it through
      * Gemini for OCR + translation, copies the (possibly downscaled) image
@@ -32,6 +45,7 @@ object OcrProcessor {
         apiKey: String,
         model: String
     ): Result<OcrRecord> = withContext(Dispatchers.IO) {
+        _activeJobs.update { it + 1 }
         try {
             val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: return@withContext Result.failure(Exception("Unable to open image: $uri"))
@@ -66,6 +80,8 @@ object OcrProcessor {
             Result.success(record)
         } catch (e: Exception) {
             Result.failure(e)
+        } finally {
+            _activeJobs.update { it - 1 }
         }
     }
 
