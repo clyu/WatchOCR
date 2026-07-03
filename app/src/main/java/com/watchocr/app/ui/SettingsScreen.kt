@@ -21,7 +21,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.Divider
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
@@ -138,7 +138,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             Text("Choose Folder")
         }
 
-        Divider()
+        HorizontalDivider()
 
         Text("Gemini API Key", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
@@ -161,7 +161,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             modifier = Modifier.fillMaxWidth()
         )
 
-        Divider()
+        HorizontalDivider()
 
         Text("Gemini Model (OCR)", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
@@ -175,7 +175,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             modifier = Modifier.fillMaxWidth()
         )
 
-        Divider()
+        HorizontalDivider()
 
         Text("Auto-delete History", style = MaterialTheme.typography.titleMedium)
         ExposedDropdownMenuBox(
