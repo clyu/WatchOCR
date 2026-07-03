@@ -11,9 +11,7 @@ data class ImageBucket(val id: Long, val name: String, val imageCount: Int)
 /** A single image row from the MediaStore images collection. */
 data class MediaImage(
     val uri: Uri,
-    val displayName: String,
-    val dateAddedMillis: Long,
-    val sizeBytes: Long
+    val displayName: String
 )
 
 /** Read-only queries over the device's MediaStore images collection. */
@@ -50,15 +48,15 @@ object MediaStoreImages {
 
     /**
      * Images in [bucketId] added to MediaStore at or after [addedSinceMillis],
-     * oldest first. On Android 10+ pending (still being written) rows are
-     * excluded by default, so every returned image is fully written.
+     * oldest first. Rows marked IS_PENDING are excluded by default on Android
+     * 10+, but writers that skip the pending pattern (direct File writes picked
+     * up by the media scanner) can still surface rows whose file is not fully
+     * written yet — callers must verify stability before reading the content.
      */
     fun queryBucketImages(context: Context, bucketId: Long, addedSinceMillis: Long): List<MediaImage> {
         val projection = arrayOf(
             MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.DISPLAY_NAME,
-            MediaStore.Images.Media.DATE_ADDED,
-            MediaStore.Images.Media.SIZE
+            MediaStore.Images.Media.DISPLAY_NAME
         )
         val selection =
             "${MediaStore.Images.Media.BUCKET_ID} = ? AND ${MediaStore.Images.Media.DATE_ADDED} >= ?"
@@ -75,16 +73,12 @@ object MediaStoreImages {
         )?.use { cursor ->
             val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
-            val dateCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
-            val sizeCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.SIZE)
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idCol)
                 images.add(
                     MediaImage(
                         uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id),
-                        displayName = cursor.getString(nameCol) ?: id.toString(),
-                        dateAddedMillis = cursor.getLong(dateCol) * 1000,
-                        sizeBytes = cursor.getLong(sizeCol)
+                        displayName = cursor.getString(nameCol) ?: id.toString()
                     )
                 )
             }

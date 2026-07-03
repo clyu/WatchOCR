@@ -35,6 +35,11 @@ object OcrProcessor {
         try {
             val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: return@withContext Result.failure(Exception("Unable to open image: $uri"))
+            if (rawBytes.isEmpty()) {
+                return@withContext Result.failure(
+                    Exception("Image is empty (file may still be being written): $uri")
+                )
+            }
             val rawMime = context.contentResolver.getType(uri) ?: guessMimeType(uri)
 
             val (bytes, mimeType) = prepareForUpload(rawBytes, rawMime)
@@ -75,7 +80,10 @@ object OcrProcessor {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         val maxDimension = maxOf(bounds.outWidth, bounds.outHeight)
-        if (maxDimension <= 0) return bytes to mimeType // not decodable; send as-is
+        // Not decodable locally: BitmapFactory supports fewer formats than the
+        // API (e.g. AVIF before Android 12), so send the bytes as-is and let
+        // the API decide instead of rejecting the file outright.
+        if (maxDimension <= 0) return bytes to mimeType
         if (maxDimension <= MAX_DIMENSION && bytes.size <= MAX_UPLOAD_BYTES) return bytes to mimeType
 
         var sampleSize = 1
