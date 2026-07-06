@@ -166,7 +166,10 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
                 }
             }
             if (isLandscape) {
-                NavigationRail(modifier = Modifier.fillMaxHeight()) {
+                NavigationRail(
+                    modifier = Modifier.fillMaxHeight(),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer
+                ) {
                     Spacer(modifier = Modifier.weight(1f))
                     NavigationRailItem(
                         selected = selectedTab == 0,
