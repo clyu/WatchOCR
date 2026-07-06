@@ -1,18 +1,11 @@
 package com.watchocr.app.data
 
-import android.content.ContentUris
 import android.content.Context
-import android.net.Uri
 import android.provider.MediaStore
+import java.io.File
 
 /** An image folder (MediaStore bucket) available on the device. */
 data class ImageBucket(val id: Long, val name: String, val imageCount: Int)
-
-/** A single image row from the MediaStore images collection. */
-data class MediaImage(
-    val uri: Uri,
-    val displayName: String
-)
 
 /** Read-only queries over the device's MediaStore images collection. */
 object MediaStoreImages {
@@ -47,42 +40,28 @@ object MediaStoreImages {
     }
 
     /**
-     * Images in [bucketId] added to MediaStore at or after [addedSinceMillis],
-     * oldest first. Rows marked IS_PENDING are excluded by default on Android
-     * 10+, but writers that skip the pending pattern (direct File writes picked
-     * up by the media scanner) can still surface rows whose file is not fully
-     * written yet — callers must verify stability before reading the content.
+     * Absolute directory path of [bucketId], taken from the DATA column of any
+     * image in the bucket (BUCKET_ID is the hash of the lowercased parent
+     * directory, so every image in a bucket shares one parent), or null when no
+     * row has a usable path.
      */
-    fun queryBucketImages(context: Context, bucketId: Long, addedSinceMillis: Long): List<MediaImage> {
-        val projection = arrayOf(
-            MediaStore.Images.Media._ID,
-            MediaStore.Images.Media.DISPLAY_NAME
-        )
-        val selection =
-            "${MediaStore.Images.Media.BUCKET_ID} = ? AND ${MediaStore.Images.Media.DATE_ADDED} >= ?"
-        // DATE_ADDED is stored in seconds.
-        val selectionArgs = arrayOf(bucketId.toString(), (addedSinceMillis / 1000).toString())
-
-        val images = mutableListOf<MediaImage>()
+    @Suppress("DEPRECATION") // DATA is deprecated but is the only bucket->path mapping
+    fun queryBucketPath(context: Context, bucketId: Long): String? {
         context.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            projection,
-            selection,
-            selectionArgs,
-            "${MediaStore.Images.Media.DATE_ADDED} ASC"
+            arrayOf(MediaStore.Images.Media.DATA),
+            "${MediaStore.Images.Media.BUCKET_ID} = ?",
+            arrayOf(bucketId.toString()),
+            null
         )?.use { cursor ->
-            val idCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
-            val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DISPLAY_NAME)
+            val dataCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATA)
             while (cursor.moveToNext()) {
-                val id = cursor.getLong(idCol)
-                images.add(
-                    MediaImage(
-                        uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id),
-                        displayName = cursor.getString(nameCol) ?: id.toString()
-                    )
-                )
+                val data = cursor.getString(dataCol)
+                if (!data.isNullOrBlank()) {
+                    File(data).parent?.let { return it }
+                }
             }
         }
-        return images
+        return null
     }
 }

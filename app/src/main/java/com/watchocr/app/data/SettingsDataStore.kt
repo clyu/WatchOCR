@@ -18,8 +18,8 @@ data class AppSettings(
     val bucketId: Long? = null,
     /** Display name of the watched bucket, for the settings UI. */
     val bucketName: String? = null,
-    /** Images added to MediaStore before this time are ignored. */
-    val watchStartMillis: Long = 0L,
+    /** Absolute filesystem path of the watched bucket's directory, or null if unresolved. */
+    val watchedDirPath: String? = null,
     val apiKey: String = "",
     val model: String = DEFAULT_MODEL,
     /** OCR results older than this many days are deleted automatically; 0 = keep forever. */
@@ -31,7 +31,7 @@ class SettingsDataStore(private val context: Context) {
     private object Keys {
         val BUCKET_ID = longPreferencesKey("bucket_id")
         val BUCKET_NAME = stringPreferencesKey("bucket_name")
-        val WATCH_START_MILLIS = longPreferencesKey("watch_start_millis")
+        val WATCHED_DIR_PATH = stringPreferencesKey("watched_dir_path")
         val API_KEY = stringPreferencesKey("api_key")
         val MODEL = stringPreferencesKey("model")
         val RETENTION_DAYS = intPreferencesKey("retention_days")
@@ -41,20 +41,24 @@ class SettingsDataStore(private val context: Context) {
         AppSettings(
             bucketId = prefs[Keys.BUCKET_ID],
             bucketName = prefs[Keys.BUCKET_NAME],
-            watchStartMillis = prefs[Keys.WATCH_START_MILLIS] ?: 0L,
+            watchedDirPath = prefs[Keys.WATCHED_DIR_PATH],
             apiKey = prefs[Keys.API_KEY] ?: "",
             model = prefs[Keys.MODEL] ?: DEFAULT_MODEL,
             retentionDays = prefs[Keys.RETENTION_DAYS] ?: 0
         )
     }
 
-    suspend fun setWatchedBucket(bucketId: Long, bucketName: String) {
+    suspend fun setWatchedBucket(bucketId: Long, bucketName: String, dirPath: String) {
         context.dataStore.edit {
             it[Keys.BUCKET_ID] = bucketId
             it[Keys.BUCKET_NAME] = bucketName
-            // Watching starts now: pre-existing images in the bucket are ignored.
-            it[Keys.WATCH_START_MILLIS] = System.currentTimeMillis()
+            it[Keys.WATCHED_DIR_PATH] = dirPath
         }
+    }
+
+    /** Backfills the directory path for buckets selected before it was persisted. */
+    suspend fun setWatchedDirPath(path: String) {
+        context.dataStore.edit { it[Keys.WATCHED_DIR_PATH] = path }
     }
 
     suspend fun setApiKey(key: String) {

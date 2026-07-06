@@ -6,60 +6,58 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.database.ContentObserver
 import android.net.Uri
 import android.os.Build
+import android.os.FileObserver
 import android.os.IBinder
-import android.provider.MediaStore
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.watchocr.app.NotificationChannels
-import com.watchocr.app.data.AppDatabase
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.MediaStoreImages
-import com.watchocr.app.data.MonitoredFile
+import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.data.SettingsDataStore
+import com.watchocr.app.network.ApiHttpException
 import com.watchocr.app.ocr.OcrProcessor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withTimeoutOrNull
+import java.io.File
+import java.io.IOException
 
 /**
- * Foreground service that watches a user-selected MediaStore bucket (folder)
- * for newly added images and runs each one through [OcrProcessor]. A
- * [ContentObserver] on the images collection triggers a scan as soon as
- * MediaStore changes. Only images added after the folder was selected are
- * processed. Before OCR, each file's real on-disk size is polled until it
- * stabilizes, so partially-written files are not uploaded.
+ * Foreground service that watches the user-selected folder for newly written
+ * images via [FileObserver] (inotify) and runs each one through
+ * [OcrProcessor]. CLOSE_WRITE fires only after a writer closes the file and
+ * MOVED_TO only after a rename of a fully written file (the MediaStore
+ * IS_PENDING pattern publishes `.pending-*` files this way), so a reported
+ * file is complete — no size polling or processed-file bookkeeping is needed.
  */
 class DirectoryMonitorService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var monitorJob: Job? = null
+    private var cleanupJob: Job? = null
+
+    /** Strong reference: a GC'd FileObserver silently stops watching. */
+    private var fileObserver: FileObserver? = null
+
+    /** Files reported by [fileObserver]; UNLIMITED so bursts are not dropped. */
+    private val newFiles = Channel<File>(Channel.UNLIMITED)
 
     /** Last processing error, kept visible in the idle notification until a file succeeds. */
     private var lastErrorText: String? = null
-
-    private var lastCleanupMillis = 0L
-
-    /** Signalled by [contentObserver] whenever the images collection changes. */
-    private val changeSignal = Channel<Unit>(Channel.CONFLATED)
-
-    private val contentObserver = object : ContentObserver(null) {
-        override fun onChange(selfChange: Boolean) {
-            Log.d(TAG, "MediaStore change event")
-            changeSignal.trySend(Unit)
-        }
-    }
 
     override fun onCreate() {
         super.onCreate()
@@ -70,16 +68,20 @@ class DirectoryMonitorService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
-        contentResolver.registerContentObserver(
-            MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-            true,
-            contentObserver
-        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (monitorJob?.isActive != true) {
-            monitorJob = serviceScope.launch { monitorLoop() }
+        // Restart the loop on every start: MainActivity re-calls start() when
+        // the watched bucket changes, and the loop re-resolves the directory.
+        // Joining the old loop first keeps its cleanup from stopping the new
+        // loop's observer.
+        val previous = monitorJob
+        monitorJob = serviceScope.launch {
+            previous?.cancelAndJoin()
+            monitorLoop()
+        }
+        if (cleanupJob?.isActive != true) {
+            cleanupJob = serviceScope.launch { cleanupLoop() }
         }
         return START_STICKY
     }
@@ -92,7 +94,8 @@ class DirectoryMonitorService : Service() {
     }
 
     override fun onDestroy() {
-        contentResolver.unregisterContentObserver(contentObserver)
+        fileObserver?.stopWatching()
+        fileObserver = null
         monitorJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
@@ -100,118 +103,115 @@ class DirectoryMonitorService : Service() {
 
     private suspend fun monitorLoop() {
         val settingsDataStore = SettingsDataStore(applicationContext)
-        val db = AppDatabase.getInstance(applicationContext)
+        val settings = settingsDataStore.settingsFlow.first()
+        val bucketId = settings.bucketId
 
-        while (serviceScope.isActive) {
-            val settings = settingsDataStore.settingsFlow.first()
-            val bucketId = settings.bucketId
+        if (bucketId == null || settings.apiKey.isBlank()) {
+            stopSelf()
+            return
+        }
 
-            if (bucketId == null || settings.apiKey.isBlank()) {
-                stopSelf()
-                return
-            }
+        // Installs upgraded from the MediaStore-based version have a bucketId
+        // but no persisted path — resolve it once and persist.
+        val dirPath = settings.watchedDirPath
+            ?: MediaStoreImages.queryBucketPath(applicationContext, bucketId)
+                ?.also { settingsDataStore.setWatchedDirPath(it) }
+        if (dirPath == null || !File(dirPath).isDirectory) {
+            updateNotification("Watched folder unavailable — re-select it in Settings.")
+            stopSelf()
+            return
+        }
 
-            var retryPending = false
-            try {
-                retryPending =
-                    scanBucket(bucketId, settings.watchStartMillis, settings.apiKey, settings.model, db)
+        startObserver(dirPath)
+        val idleText = "Watching ${settings.bucketName ?: dirPath} for new images…"
+        updateNotification(lastErrorText ?: idleText)
 
-                // Long-running service: enforce the history retention setting
-                // periodically, so it applies even when the app UI is never opened.
-                val now = System.currentTimeMillis()
-                if (now - lastCleanupMillis >= CLEANUP_INTERVAL_MS) {
-                    HistoryCleanup.deleteOlderThan(applicationContext, settings.retentionDays)
-                    lastCleanupMillis = now
+        // Some camera apps close a file, then reopen it to write EXIF and
+        // close again — two CLOSE_WRITE events for one image.
+        val recentlyDone = LinkedHashMap<String, Long>()
+
+        try {
+            for (file in newFiles) {
+                val now = SystemClock.elapsedRealtime()
+                recentlyDone.entries.removeAll { now - it.value > DEDUP_WINDOW_MS }
+                if (recentlyDone.containsKey(file.path)) {
+                    Log.d(TAG, "duplicate event for ${file.name}, skipping")
+                    continue
                 }
-            } catch (e: Exception) {
-                updateNotification("Monitor error: ${e.message}")
-                retryPending = true
-            }
+                if (!file.isFile) continue // renamed/deleted since the event
+                if (file.length() == 0L) {
+                    // Creation handshake of a two-pass writer; the write that
+                    // fills the file triggers its own CLOSE_WRITE.
+                    Log.d(TAG, "${file.name} is empty, awaiting next write")
+                    continue
+                }
 
-            // Scan again as soon as MediaStore reports a change. If a file
-            // failed with retry attempts left (or the scan itself failed),
-            // also retry after a delay even when no change event arrives.
-            if (retryPending) {
-                val signalled = withTimeoutOrNull(RETRY_DELAY_MS) { changeSignal.receive() }
-                Log.d(TAG, if (signalled != null) "woke: MediaStore change" else "woke: retry")
-            } else {
-                changeSignal.receive()
-                Log.d(TAG, "woke: MediaStore change")
+                val current = settingsDataStore.settingsFlow.first()
+                Log.i(TAG, "processing ${file.name}")
+                updateNotification("Processing ${file.name}…")
+
+                processWithRetry(file, current.apiKey, current.model).onSuccess {
+                    Log.i(TAG, "processed ${file.name}")
+                    lastErrorText = null
+                    // Dedup successes only: writers that create the file empty
+                    // and fill it in a second pass (two CLOSE_WRITEs) must stay
+                    // eligible for the event that carries the real content.
+                    recentlyDone[file.path] = SystemClock.elapsedRealtime()
+                }.onFailure {
+                    Log.w(TAG, "failed ${file.name}: ${it.message}")
+                    lastErrorText = "Failed to process ${file.name}: ${it.message}"
+                }
+                updateNotification(lastErrorText ?: idleText)
             }
+        } finally {
+            fileObserver?.stopWatching()
+            fileObserver = null
         }
     }
 
-    /**
-     * Scans [bucketId] and processes every new image. A MediaStore row can
-     * appear while the file is still being written (writers that skip
-     * IS_PENDING, media-scanner indexing), on any Android version, so
-     * [waitForStableSize] polls the file's real size until it settles before
-     * OCR runs. Failed files are retried on later scans, up to [MAX_ATTEMPTS]
-     * attempts each.
-     *
-     * @return true when at least one file failed with retry attempts left, so
-     *   a timed retry is needed even without another MediaStore change event.
-     */
-    private suspend fun scanBucket(
-        bucketId: Long,
-        watchStartMillis: Long,
-        apiKey: String,
-        model: String,
-        db: AppDatabase
-    ): Boolean {
-        val images = MediaStoreImages.queryBucketImages(applicationContext, bucketId, watchStartMillis)
-        val dao = db.monitoredFileDao()
-        val knownFiles = dao.getAll().associateBy { it.documentUri }
-        var retryPending = false
-        Log.d(TAG, "scanning bucket $bucketId: ${images.size} images since watch start, ${knownFiles.size} known")
-
-        for (image in images) {
-            val uriString = image.uri.toString()
-            val known = knownFiles[uriString]
-            if (known != null && (known.processed || known.failedAttempts >= MAX_ATTEMPTS)) continue
-            if (known == null) dao.insert(MonitoredFile(uriString))
-            val attemptsSoFar = known?.failedAttempts ?: 0
-
-            Log.i(TAG, "processing ${image.displayName}")
-            updateNotification("Processing ${image.displayName}…")
-            waitForStableSize(image.uri)
-
-            val result = OcrProcessor.processImage(applicationContext, image.uri, apiKey, model)
-            result.onSuccess {
-                Log.i(TAG, "processed ${image.displayName}")
-                dao.markProcessed(uriString)
-                lastErrorText = null
-            }.onFailure {
-                Log.w(TAG, "failed ${image.displayName} (attempt ${attemptsSoFar + 1}): ${it.message}")
-                dao.incrementFailedAttempts(uriString)
-                if (attemptsSoFar + 1 < MAX_ATTEMPTS) retryPending = true
-                lastErrorText = "Failed to process ${image.displayName}: ${it.message}"
+    @Suppress("DEPRECATION") // String ctor: the File overload is API 29+, minSdk is 26
+    private fun startObserver(dirPath: String) {
+        fileObserver?.stopWatching()
+        fileObserver = object : FileObserver(dirPath, CLOSE_WRITE or MOVED_TO) {
+            // Called on FileObserver's own thread: filter cheaply, hand off.
+            override fun onEvent(event: Int, path: String?) {
+                if (path == null || path.startsWith(".")) return // .pending-*, .trashed-*
+                if (path.substringAfterLast('.', "").lowercase() !in IMAGE_EXTENSIONS) return
+                newFiles.trySend(File(dirPath, path))
             }
-        }
+        }.also { it.startWatching() }
+    }
 
-        updateNotification(lastErrorText ?: "Watching for new images…")
-        return retryPending
+    private suspend fun processWithRetry(file: File, apiKey: String, model: String): Result<OcrRecord> {
+        val uri = Uri.fromFile(file)
+        var result = OcrProcessor.processImage(applicationContext, uri, apiKey, model)
+        var attempt = 1
+        while (result.isFailure && attempt < MAX_ATTEMPTS && isRetryable(result.exceptionOrNull())) {
+            Log.w(TAG, "retrying ${file.name} (attempt ${attempt + 1}): ${result.exceptionOrNull()?.message}")
+            delay(RETRY_DELAY_MS)
+            result = OcrProcessor.processImage(applicationContext, uri, apiKey, model)
+            attempt++
+        }
+        return result
     }
 
     /**
-     * Best-effort wait until the file's real on-disk size (AssetFileDescriptor
-     * length) is non-zero and unchanged across two consecutive polls. Gives up
-     * after [STABILITY_MAX_POLLS] and returns anyway: [OcrProcessor] rejects
-     * empty/undecodable content, and failures are retried on the next wake.
+     * 4xx responses other than 429 are permanent (invalid API key: 400/403,
+     * unprocessable image: 400) — retrying them is pointless.
      */
-    private suspend fun waitForStableSize(uri: Uri) {
-        var lastSize = -1L
-        repeat(STABILITY_MAX_POLLS) {
-            val size = try {
-                contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: return
-            } catch (e: Exception) {
-                return // deleted or unreadable; let processImage surface the real error
-            }
-            if (size > 0 && size == lastSize) return // >0 also handles UNKNOWN_LENGTH (-1)
-            lastSize = size
-            delay(STABILITY_POLL_MS)
+    private fun isRetryable(e: Throwable?): Boolean =
+        e is IOException || (e is ApiHttpException && (e.code == 429 || e.code in 500..599))
+
+    /**
+     * Long-running service: enforces the history retention setting periodically,
+     * so it applies even when the app UI is never opened.
+     */
+    private suspend fun cleanupLoop() {
+        val settingsDataStore = SettingsDataStore(applicationContext)
+        while (currentCoroutineContext().isActive) {
+            HistoryCleanup.deleteOlderThan(applicationContext, settingsDataStore.settingsFlow.first().retentionDays)
+            delay(CLEANUP_INTERVAL_MS)
         }
-        Log.w(TAG, "size of $uri never stabilized; processing anyway")
     }
 
     private fun createNotificationChannel() {
@@ -242,19 +242,19 @@ class DirectoryMonitorService : Service() {
 
         private const val NOTIFICATION_ID = 1001
 
-        /** A file is OCR'd at most this many times before it is given up on. */
+        /** Attempts per file for transient (network/429/5xx) failures. */
         private const val MAX_ATTEMPTS = 3
 
-        /** Delay before retrying failed files when no MediaStore change arrives. */
-        private const val RETRY_DELAY_MS = 60_000L
+        /** Delay between attempts on a transient failure. */
+        private const val RETRY_DELAY_MS = 15_000L
 
-        /** Interval between file-size polls while waiting for a file to stabilize. */
-        private const val STABILITY_POLL_MS = 500L
-
-        /** Maximum size polls per file before processing it anyway. */
-        private const val STABILITY_MAX_POLLS = 20
+        /** Duplicate events for the same path within this window are dropped. */
+        private const val DEDUP_WINDOW_MS = 10_000L
 
         private const val CLEANUP_INTERVAL_MS = 60 * 60 * 1000L
+
+        private val IMAGE_EXTENSIONS =
+            setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif")
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, DirectoryMonitorService::class.java))

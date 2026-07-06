@@ -50,9 +50,7 @@ object OcrProcessor {
             val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: return@withContext Result.failure(Exception("Unable to open image: $uri"))
             if (rawBytes.isEmpty()) {
-                return@withContext Result.failure(
-                    Exception("Image is empty (file may still be being written): $uri")
-                )
+                return@withContext Result.failure(Exception("Image is empty: $uri"))
             }
             val rawMime = context.contentResolver.getType(uri) ?: guessMimeType(uri)
 
@@ -115,7 +113,14 @@ object OcrProcessor {
     }
 
     private fun guessMimeType(uri: Uri): String {
-        val name = uri.lastPathSegment.orEmpty().lowercase()
-        return if (name.endsWith(".png")) "image/png" else "image/jpeg"
+        return when (uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()) {
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            "gif" -> "image/gif"
+            "bmp" -> "image/bmp"
+            "heic", "heif" -> "image/heif"
+            "avif" -> "image/avif"
+            else -> "image/jpeg"
+        }
     }
 }

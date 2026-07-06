@@ -7,10 +7,9 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [OcrRecord::class, MonitoredFile::class], version = 4, exportSchema = false)
+@Database(entities = [OcrRecord::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun ocrRecordDao(): OcrRecordDao
-    abstract fun monitoredFileDao(): MonitoredFileDao
 
     companion object {
         @Volatile
@@ -52,13 +51,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // v5: new-image detection moved to FileObserver; per-file tracking is gone.
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS monitored_files")
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "watchocr.db"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .build().also { INSTANCE = it }
             }
         }
     }

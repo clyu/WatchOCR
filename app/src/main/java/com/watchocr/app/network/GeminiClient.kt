@@ -17,6 +17,13 @@ data class GeminiOcrResult(
 )
 
 /**
+ * A non-2xx API response, with the HTTP status [code] so callers can tell
+ * permanent failures (4xx: invalid key, unprocessable image) from transient
+ * ones worth retrying (429, 5xx).
+ */
+class ApiHttpException(val code: Int, message: String) : Exception(message)
+
+/**
  * Mirrors the request/response contract of gemini_ocr_trans.sh: a single
  * generateContent call with inline image data and a structured JSON response schema.
  */
@@ -52,7 +59,10 @@ object GeminiClient {
                 val bodyString = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
-                        Exception("API request failed with HTTP ${response.code}: ${extractApiError(bodyString)}")
+                        ApiHttpException(
+                            response.code,
+                            "API request failed with HTTP ${response.code}: ${extractApiError(bodyString)}"
+                        )
                     )
                 }
                 parseResponse(bodyString)

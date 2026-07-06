@@ -4,7 +4,7 @@ An Android app that watches a folder for new screenshots/images, runs each one t
 
 ## Features
 
-- **Folder monitoring**: pick an image folder (a MediaStore bucket, e.g. Screenshots) and a foreground service reacts to new images the moment MediaStore indexes them, via a `ContentObserver`. Each image is processed once its file size has stabilized (so half-written files are never uploaded). Only images added after the folder was selected are OCR'd; failed images are retried a few times.
+- **Folder monitoring**: pick an image folder (e.g. Screenshots) and a foreground service watches its directory with `FileObserver` (inotify). An image is picked up only when its write completes (`CLOSE_WRITE`) or it is moved into the folder (`MOVED_TO`), so half-written files are never uploaded. Transient failures (network, HTTP 429/5xx) are retried a few times in place; permanent ones (invalid API key, unprocessable image) are not.
 - **Manual import**: pick a single image from the History tab at any time, independent of the watched folder.
 - **OCR + translation + analysis**: each image is sent to the Gemini API, which returns the extracted text, a Traditional Chinese translation, and explanations for any idioms/slang, via a structured JSON response schema.
 - **History**: a scrollable list of past results with the source thumbnail, timestamp, extracted text (tap to copy), translation, and idiom/slang analysis. Newly arrived results automatically scroll into view.
@@ -13,7 +13,7 @@ An Android app that watches a folder for new screenshots/images, runs each one t
 ## How it works
 
 1. In **Settings**, choose an image folder to watch (requires the photo access permission), enter your Gemini API key, and optionally change the model (defaults to `gemini-3.1-flash-lite`).
-2. Once both a folder and API key are set, `DirectoryMonitorService` starts as a foreground service, registers a `ContentObserver` on the MediaStore images collection, and scans the selected bucket whenever it changes. Because MediaStore can surface rows whose file is still being written (writers that skip `IS_PENDING`), a new image is only processed once its reported size is unchanged across two scans a couple of seconds apart (capped, so an unreliable size column never blocks a file forever).
+2. Once both a folder and API key are set, `DirectoryMonitorService` starts as a foreground service and watches the folder's directory with a `FileObserver` listening for `CLOSE_WRITE` and `MOVED_TO` (the MediaStore `IS_PENDING` pattern publishes files by renaming a hidden `.pending-*` file, which arrives as `MOVED_TO`). Both events fire only for fully written files, so no size polling or per-file bookkeeping is needed; only files created while the service is running are processed.
 3. Each new image's bytes are base64-encoded and sent to `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent` with a JSON response schema requesting `ocr`, `translation`, and `analysis` fields.
 4. The image is copied into app-private storage and the result is saved as an `OcrRecord`, which appears at the top of the **History** tab.
 
@@ -28,9 +28,7 @@ app/src/main/java/com/watchocr/app/
 │   ├── AppDatabase.kt            # Room database
 │   ├── OcrRecord.kt              # OCR result entity
 │   ├── OcrRecordDao.kt
-│   ├── MonitoredFile.kt          # Tracks seen files + OCR retry state
-│   ├── MonitoredFileDao.kt
-│   ├── MediaStoreImages.kt       # MediaStore bucket/image queries
+│   ├── MediaStoreImages.kt       # MediaStore bucket queries + bucket->path lookup
 │   └── SettingsDataStore.kt      # DataStore-backed app settings
 ├── network/
 │   └── GeminiClient.kt           # Gemini API request/response handling
@@ -70,4 +68,4 @@ CI (`.github/workflows/android-build.yml`) builds a release APK on every push/PR
 - Kotlin, Jetpack Compose, Material 3
 - Room (persistence), DataStore (settings)
 - OkHttp (networking), Coil (image loading)
-- MediaStore + `ContentObserver` for event-driven folder monitoring (needs only the photo read permission)
+- `FileObserver` (inotify) for event-driven folder monitoring (needs only the photo read permission)

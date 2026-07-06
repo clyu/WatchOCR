@@ -47,7 +47,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
-import com.watchocr.app.data.AppDatabase
 import com.watchocr.app.data.AppSettings
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.ImageBucket
@@ -253,14 +252,21 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
-                                        val changed = bucket.id != settings.bucketId
                                         scope.launch {
-                                            if (changed) {
-                                                AppDatabase.getInstance(context).monitoredFileDao().clear()
+                                            val dirPath = withContext(Dispatchers.IO) {
+                                                MediaStoreImages.queryBucketPath(context, bucket.id)
                                             }
-                                            settingsDataStore.setWatchedBucket(bucket.id, bucket.name)
+                                            if (dirPath == null) {
+                                                Toast.makeText(
+                                                    context,
+                                                    "Couldn't determine this folder's path; choose another folder.",
+                                                    Toast.LENGTH_LONG
+                                                ).show()
+                                            } else {
+                                                settingsDataStore.setWatchedBucket(bucket.id, bucket.name, dirPath)
+                                            }
+                                            pickerBuckets = null
                                         }
-                                        pickerBuckets = null
                                     }
                                     .padding(vertical = 12.dp)
                             )
