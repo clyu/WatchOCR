@@ -61,7 +61,7 @@ A release build additionally accepts signing credentials via Gradle properties (
 ./gradlew assembleRelease
 ```
 
-CI (`.github/workflows/android-build.yml`) builds a release APK on every push/PR to `main` and uploads it as a build artifact, using real release signing when the corresponding secrets are configured.
+CI (`.github/workflows/android-build.yml`) builds a release APK on every push to any branch (when build-related files change) and uploads it as a build artifact, using real release signing when the corresponding secrets are configured.
 
 ## Tech stack
 
