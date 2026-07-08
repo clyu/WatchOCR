@@ -43,7 +43,9 @@ class SettingsDataStore(private val context: Context) {
             bucketName = prefs[Keys.BUCKET_NAME],
             watchedDirPath = prefs[Keys.WATCHED_DIR_PATH],
             apiKey = prefs[Keys.API_KEY] ?: "",
-            model = prefs[Keys.MODEL] ?: DEFAULT_MODEL,
+            // Blank counts as unset: the settings field writes every keystroke,
+            // so clearing it stores "", which would produce a broken request URL.
+            model = prefs[Keys.MODEL]?.takeUnless { it.isBlank() } ?: DEFAULT_MODEL,
             retentionDays = prefs[Keys.RETENTION_DAYS] ?: 0
         )
     }

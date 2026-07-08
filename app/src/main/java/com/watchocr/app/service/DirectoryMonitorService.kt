@@ -149,6 +149,15 @@ class DirectoryMonitorService : Service() {
                 }
 
                 val current = settingsDataStore.settingsFlow.first()
+                if (current.apiKey.isBlank()) {
+                    // Key cleared after startup: every upload would fail, so
+                    // stop instead of burning retries; MainActivity restarts
+                    // the service once a key is set again.
+                    Log.w(TAG, "API key cleared, stopping monitor")
+                    postAlertNotification("Gemini API key is not set — monitoring stopped. Set it in Settings to resume.")
+                    stopSelf()
+                    return
+                }
                 Log.i(TAG, "processing ${file.name}")
                 updateNotification("Processing ${file.name}…")
 
