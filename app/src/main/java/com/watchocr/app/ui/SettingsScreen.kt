@@ -202,10 +202,9 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                         text = { Text(label) },
                         onClick = {
                             retentionMenuExpanded = false
-                            scope.launch {
-                                settingsDataStore.setRetentionDays(days)
-                                HistoryCleanup.deleteOlderThan(context, days)
-                            }
+                            // MainActivity's LaunchedEffect(settings.retentionDays)
+                            // runs the cleanup once this write lands.
+                            scope.launch { settingsDataStore.setRetentionDays(days) }
                         }
                     )
                 }
