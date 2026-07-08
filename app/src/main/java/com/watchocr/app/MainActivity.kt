@@ -69,6 +69,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+/** Top-level destinations, indexed by `selectedTab`; rendered as a bottom bar or a rail. */
+private val navTabs = listOf(
+    "History" to Icons.Default.History,
+    "Settings" to Icons.Default.Settings
+)
+
 @Composable
 fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     val context = LocalContext.current
@@ -131,18 +137,14 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
         bottomBar = {
             if (!isLandscape) {
                 NavigationBar {
-                    NavigationBarItem(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        icon = { Icon(Icons.Default.History, contentDescription = null) },
-                        label = { Text("History") }
-                    )
-                    NavigationBarItem(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                        label = { Text("Settings") }
-                    )
+                    navTabs.forEachIndexed { index, (label, icon) ->
+                        NavigationBarItem(
+                            selected = selectedTab == index,
+                            onClick = { selectedTab = index },
+                            icon = { Icon(icon, contentDescription = null) },
+                            label = { Text(label) }
+                        )
+                    }
                 }
             }
         }
@@ -175,19 +177,15 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
                     containerColor = MaterialTheme.colorScheme.surfaceContainer
                 ) {
                     Spacer(modifier = Modifier.weight(1f))
-                    NavigationRailItem(
-                        selected = selectedTab == 0,
-                        onClick = { selectedTab = 0 },
-                        icon = { Icon(Icons.Default.History, contentDescription = null) },
-                        label = { Text("History") }
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    NavigationRailItem(
-                        selected = selectedTab == 1,
-                        onClick = { selectedTab = 1 },
-                        icon = { Icon(Icons.Default.Settings, contentDescription = null) },
-                        label = { Text("Settings") }
-                    )
+                    navTabs.forEachIndexed { index, (label, icon) ->
+                        if (index > 0) Spacer(modifier = Modifier.height(12.dp))
+                        NavigationRailItem(
+                            selected = selectedTab == index,
+                            onClick = { selectedTab = index },
+                            icon = { Icon(icon, contentDescription = null) },
+                            label = { Text(label) }
+                        )
+                    }
                     Spacer(modifier = Modifier.weight(1f))
                 }
             }
