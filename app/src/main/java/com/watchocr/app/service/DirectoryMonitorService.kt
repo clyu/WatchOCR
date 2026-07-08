@@ -117,7 +117,9 @@ class DirectoryMonitorService : Service() {
             ?: MediaStoreImages.queryBucketPath(applicationContext, bucketId)
                 ?.also { settingsDataStore.setWatchedDirPath(it) }
         if (dirPath == null || !File(dirPath).isDirectory) {
-            updateNotification("Watched folder unavailable — re-select it in Settings.")
+            // Not updateNotification: stopSelf() removes the foreground
+            // notification, so the message must go out as a standalone one.
+            postAlertNotification("Watched folder unavailable — re-select it in Settings.")
             stopSelf()
             return
         }
@@ -223,13 +225,14 @@ class DirectoryMonitorService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    private fun buildNotification(text: String): Notification {
+    private fun buildNotification(text: String, ongoing: Boolean = true): Notification {
         return NotificationCompat.Builder(this, NotificationChannels.MONITOR_CHANNEL_ID)
             .setContentTitle("WatchOCR")
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setOngoing(true)
+            .setOngoing(ongoing)
+            .setAutoCancel(!ongoing)
             .build()
     }
 
@@ -237,10 +240,19 @@ class DirectoryMonitorService : Service() {
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(text))
     }
 
+    /** A dismissible notification that outlives the service (and its foreground notification). */
+    private fun postAlertNotification(text: String) {
+        getSystemService(NotificationManager::class.java)
+            .notify(ALERT_NOTIFICATION_ID, buildNotification(text, ongoing = false))
+    }
+
     companion object {
         private const val TAG = "WatchOCR"
 
         private const val NOTIFICATION_ID = 1001
+
+        /** For [postAlertNotification]; distinct from the foreground notification's ID. */
+        private const val ALERT_NOTIFICATION_ID = 1002
 
         /** Attempts per file for transient (network/429/5xx) failures. */
         private const val MAX_ATTEMPTS = 3
