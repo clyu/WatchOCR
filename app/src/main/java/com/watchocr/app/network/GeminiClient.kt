@@ -137,14 +137,10 @@ object GeminiClient {
         val parts = candidate.optJSONObject("content")?.optJSONArray("parts")
             ?: return Result.failure(Exception(noTextMessage(finishReason)))
 
-        var rawText: String? = null
-        for (i in 0 until parts.length()) {
-            val part = parts.getJSONObject(i)
-            if (part.has("text") && !part.isNull("text") && !part.optBoolean("thought", false)) {
-                rawText = part.getString("text")
-                break
-            }
-        }
+        val rawText = (0 until parts.length()).asSequence()
+            .map { parts.getJSONObject(it) }
+            .firstOrNull { it.has("text") && !it.isNull("text") && !it.optBoolean("thought", false) }
+            ?.getString("text")
 
         if (rawText.isNullOrEmpty()) {
             return Result.failure(Exception(noTextMessage(finishReason)))
@@ -165,13 +161,9 @@ object GeminiClient {
                 )
             )
         }
-        val analysisArray = resultJson.optJSONArray("analysis")
-        val analysis = mutableListOf<String>()
-        if (analysisArray != null) {
-            for (i in 0 until analysisArray.length()) {
-                analysis.add(analysisArray.getString(i))
-            }
-        }
+        val analysis = resultJson.optJSONArray("analysis")
+            ?.let { array -> (0 until array.length()).map(array::getString) }
+            .orEmpty()
 
         return Result.success(
             GeminiOcrResult(
