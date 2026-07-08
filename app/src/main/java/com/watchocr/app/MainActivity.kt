@@ -101,8 +101,12 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
         }
     }
 
-    LaunchedEffect(settings.bucketId, settings.apiKey) {
-        if (settings.bucketId != null && settings.apiKey.isNotBlank()) {
+    // Keyed on whether the key exists, not its text: every keystroke in the
+    // API key field writes to DataStore, and restarting the service per
+    // keystroke would cancel (and lose) any file it is processing.
+    val hasApiKey = settings.apiKey.isNotBlank()
+    LaunchedEffect(settings.bucketId, hasApiKey) {
+        if (settings.bucketId != null && hasApiKey) {
             DirectoryMonitorService.start(context)
         }
     }
