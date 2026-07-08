@@ -34,7 +34,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,7 +52,6 @@ import com.watchocr.app.data.ImageBucket
 import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.SettingsDataStore
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -79,27 +77,19 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // The text fields own their state and are seeded from DataStore exactly once.
-    // Keying remember on the round-tripped settings value would let a stale
-    // DataStore emission reset the field mid-typing and drop keystrokes.
+    // The text fields own their state, seeded exactly once from [settings],
+    // which the caller guarantees is already loaded (this screen is not
+    // composed before DataStore's first emission). Keying remember on the
+    // round-tripped settings value would let a stale DataStore emission reset
+    // the field mid-typing and drop keystrokes.
     var apiKey by rememberSaveable { mutableStateOf(settings.apiKey) }
     var model by rememberSaveable { mutableStateOf(settings.model) }
-    var seededFromStore by rememberSaveable { mutableStateOf(false) }
     var apiKeyVisible by remember { mutableStateOf(false) }
 
     // Non-null while the folder picker dialog is showing.
     var pickerBuckets by remember { mutableStateOf<List<ImageBucket>?>(null) }
     var showClearConfirm by remember { mutableStateOf(false) }
     var retentionMenuExpanded by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        if (!seededFromStore) {
-            val stored = settingsDataStore.settingsFlow.first()
-            apiKey = stored.apiKey
-            model = stored.model
-            seededFromStore = true
-        }
-    }
 
     fun openFolderPicker() {
         scope.launch {

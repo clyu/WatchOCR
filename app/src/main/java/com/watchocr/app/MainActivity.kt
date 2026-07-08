@@ -48,7 +48,6 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.watchocr.app.data.AppSettings
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.ocr.OcrProcessor
@@ -79,7 +78,9 @@ private val navTabs = listOf(
 fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     val context = LocalContext.current
     val settingsDataStore = remember { SettingsDataStore(context) }
-    val settings by settingsDataStore.settingsFlow.collectAsState(initial = AppSettings())
+    // null until DataStore's first emission; SettingsScreen is not composed
+    // before then, so its text fields can seed directly from loaded values.
+    val settings by settingsDataStore.settingsFlow.collectAsState(initial = null)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -110,26 +111,27 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     // Keyed on whether the key exists, not its text: every keystroke in the
     // API key field writes to DataStore, and restarting the service per
     // keystroke would cancel (and lose) any file it is processing.
-    val hasApiKey = settings.apiKey.isNotBlank()
-    LaunchedEffect(settings.bucketId, hasApiKey) {
-        if (settings.bucketId != null && hasApiKey) {
+    val hasApiKey = settings?.apiKey?.isNotBlank() == true
+    LaunchedEffect(settings?.bucketId, hasApiKey) {
+        if (settings?.bucketId != null && hasApiKey) {
             DirectoryMonitorService.start(context)
         }
     }
 
-    LaunchedEffect(settings.retentionDays) {
-        HistoryCleanup.deleteOlderThan(context, settings.retentionDays)
+    LaunchedEffect(settings?.retentionDays) {
+        settings?.let { HistoryCleanup.deleteOlderThan(context, it.retentionDays) }
     }
 
     val pickImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        if (settings.apiKey.isBlank()) {
+        val current = settings
+        if (uri == null || current == null) return@rememberLauncherForActivityResult
+        if (current.apiKey.isBlank()) {
             scope.launch { snackbarHostState.showSnackbar("Please set your Gemini API key in Settings first.") }
             return@rememberLauncherForActivityResult
         }
-        ocrViewModel.processImage(uri, settings.apiKey, settings.model)
+        ocrViewModel.processImage(uri, current.apiKey, current.model)
     }
 
     Scaffold(
@@ -153,7 +155,7 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
             Box(modifier = Modifier.weight(1f)) {
                 when (selectedTab) {
                     0 -> HistoryScreen()
-                    else -> SettingsScreen(settingsDataStore = settingsDataStore, settings = settings)
+                    else -> settings?.let { SettingsScreen(settingsDataStore = settingsDataStore, settings = it) }
                 }
                 if (selectedTab == 0) {
                     FloatingActionButton(
