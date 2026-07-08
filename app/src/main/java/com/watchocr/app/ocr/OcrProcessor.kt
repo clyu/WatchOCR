@@ -21,6 +21,23 @@ import java.util.UUID
 
 object OcrProcessor {
 
+    /**
+     * Lowercase filename extension -> MIME type for the image formats the app
+     * accepts. Also the single source of truth for which files the directory
+     * monitor picks up.
+     */
+    val MIME_BY_EXTENSION: Map<String, String> = mapOf(
+        "jpg" to "image/jpeg",
+        "jpeg" to "image/jpeg",
+        "png" to "image/png",
+        "webp" to "image/webp",
+        "gif" to "image/gif",
+        "bmp" to "image/bmp",
+        "heic" to "image/heif",
+        "heif" to "image/heif",
+        "avif" to "image/avif"
+    )
+
     /** Images above these limits are downscaled/re-encoded before upload. */
     private const val MAX_DIMENSION = 1536
     private const val MAX_UPLOAD_BYTES = 4 * 1024 * 1024
@@ -115,15 +132,7 @@ object OcrProcessor {
         return output.toByteArray() to "image/jpeg"
     }
 
-    private fun guessMimeType(uri: Uri): String {
-        return when (uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()) {
-            "png" -> "image/png"
-            "webp" -> "image/webp"
-            "gif" -> "image/gif"
-            "bmp" -> "image/bmp"
-            "heic", "heif" -> "image/heif"
-            "avif" -> "image/avif"
-            else -> "image/jpeg"
-        }
-    }
+    private fun guessMimeType(uri: Uri): String =
+        MIME_BY_EXTENSION[uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()]
+            ?: "image/jpeg"
 }

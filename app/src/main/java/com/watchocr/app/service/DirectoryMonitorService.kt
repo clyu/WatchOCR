@@ -187,7 +187,7 @@ class DirectoryMonitorService : Service() {
             // Called on FileObserver's own thread: filter cheaply, hand off.
             override fun onEvent(event: Int, path: String?) {
                 if (path == null || path.startsWith(".")) return // .pending-*, .trashed-*
-                if (path.substringAfterLast('.', "").lowercase() !in IMAGE_EXTENSIONS) return
+                if (path.substringAfterLast('.', "").lowercase() !in OcrProcessor.MIME_BY_EXTENSION.keys) return
                 newFiles.trySend(File(dirPath, path))
             }
         }.also { it.startWatching() }
@@ -273,9 +273,6 @@ class DirectoryMonitorService : Service() {
         private const val DEDUP_WINDOW_MS = 10_000L
 
         private const val CLEANUP_INTERVAL_MS = 60 * 60 * 1000L
-
-        private val IMAGE_EXTENSIONS =
-            setOf("jpg", "jpeg", "png", "webp", "gif", "bmp", "heic", "heif", "avif")
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, DirectoryMonitorService::class.java))
