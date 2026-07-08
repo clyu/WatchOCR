@@ -1,5 +1,6 @@
 package com.watchocr.app.network
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -67,6 +68,8 @@ object GeminiClient {
                 }
                 parseResponse(bodyString)
             }
+        } catch (e: CancellationException) {
+            throw e // cancellation must propagate, not surface as a failed OCR
         } catch (e: Exception) {
             Result.failure(e)
         }

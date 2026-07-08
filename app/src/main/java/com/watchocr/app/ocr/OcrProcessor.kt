@@ -8,6 +8,7 @@ import android.util.Base64
 import com.watchocr.app.data.AppDatabase
 import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.network.GeminiClient
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -76,6 +77,8 @@ object OcrProcessor {
             dao.insert(record)
 
             Result.success(record)
+        } catch (e: CancellationException) {
+            throw e // cancellation must propagate, not surface as a failed OCR
         } catch (e: Exception) {
             Result.failure(e)
         } finally {
