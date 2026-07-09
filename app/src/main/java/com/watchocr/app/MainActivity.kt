@@ -85,11 +85,11 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     val snackbarHostState = remember { SnackbarHostState() }
 
     var selectedTab by rememberSaveable { mutableStateOf(0) }
-    val isManualProcessing by ocrViewModel.isProcessing.collectAsState()
-    val ocrJobs by OcrProcessor.activeJobs.collectAsState()
     // Manual imports and the directory-monitor service both run OCR through
-    // OcrProcessor; either should show the in-flight spinner on the FAB.
-    val isProcessing = isManualProcessing || ocrJobs > 0
+    // OcrProcessor, which counts every in-flight job — the single source for
+    // the FAB spinner.
+    val ocrJobs by OcrProcessor.activeJobs.collectAsState()
+    val isProcessing = ocrJobs > 0
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     LaunchedEffect(Unit) {
