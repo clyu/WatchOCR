@@ -74,6 +74,34 @@ private val navTabs = listOf(
     "Settings" to Icons.Default.Settings
 )
 
+/**
+ * The one loop over [navTabs], shared by the portrait bottom bar and the
+ * landscape rail: [item] renders each tab with the container's own item
+ * composable, receiving identical slots from here.
+ */
+@Composable
+private fun NavTabItems(
+    selectedTab: Int,
+    onSelect: (Int) -> Unit,
+    item: @Composable (
+        index: Int,
+        selected: Boolean,
+        onClick: () -> Unit,
+        icon: @Composable () -> Unit,
+        label: @Composable () -> Unit
+    ) -> Unit
+) {
+    navTabs.forEachIndexed { index, (label, icon) ->
+        item(
+            index,
+            selectedTab == index,
+            { onSelect(index) },
+            { Icon(icon, contentDescription = null) },
+            { Text(label) }
+        )
+    }
+}
+
 @Composable
 fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     val context = LocalContext.current
@@ -139,13 +167,8 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
         bottomBar = {
             if (!isLandscape) {
                 NavigationBar {
-                    navTabs.forEachIndexed { index, (label, icon) ->
-                        NavigationBarItem(
-                            selected = selectedTab == index,
-                            onClick = { selectedTab = index },
-                            icon = { Icon(icon, contentDescription = null) },
-                            label = { Text(label) }
-                        )
+                    NavTabItems(selectedTab, { selectedTab = it }) { _, selected, onClick, icon, label ->
+                        NavigationBarItem(selected = selected, onClick = onClick, icon = icon, label = label)
                     }
                 }
             }
@@ -179,14 +202,9 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
                     containerColor = MaterialTheme.colorScheme.surfaceContainer
                 ) {
                     Spacer(modifier = Modifier.weight(1f))
-                    navTabs.forEachIndexed { index, (label, icon) ->
+                    NavTabItems(selectedTab, { selectedTab = it }) { index, selected, onClick, icon, label ->
                         if (index > 0) Spacer(modifier = Modifier.height(12.dp))
-                        NavigationRailItem(
-                            selected = selectedTab == index,
-                            onClick = { selectedTab = index },
-                            icon = { Icon(icon, contentDescription = null) },
-                            label = { Text(label) }
-                        )
+                        NavigationRailItem(selected = selected, onClick = onClick, icon = icon, label = label)
                     }
                     Spacer(modifier = Modifier.weight(1f))
                 }
