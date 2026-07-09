@@ -14,7 +14,6 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.watchocr.app.NotificationChannels
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.OcrRecord
@@ -247,7 +246,7 @@ class DirectoryMonitorService : Service() {
 
     private fun createNotificationChannel() {
         val channel = android.app.NotificationChannel(
-            NotificationChannels.MONITOR_CHANNEL_ID,
+            MONITOR_CHANNEL_ID,
             "Directory Monitor",
             NotificationManager.IMPORTANCE_LOW
         )
@@ -255,7 +254,7 @@ class DirectoryMonitorService : Service() {
     }
 
     private fun buildNotification(text: String, ongoing: Boolean = true): Notification {
-        return NotificationCompat.Builder(this, NotificationChannels.MONITOR_CHANNEL_ID)
+        return NotificationCompat.Builder(this, MONITOR_CHANNEL_ID)
             .setContentTitle("WatchOCR")
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
@@ -277,6 +276,8 @@ class DirectoryMonitorService : Service() {
 
     companion object {
         private const val TAG = "WatchOCR"
+
+        private const val MONITOR_CHANNEL_ID = "directory_monitor"
 
         private const val NOTIFICATION_ID = 1001
 
