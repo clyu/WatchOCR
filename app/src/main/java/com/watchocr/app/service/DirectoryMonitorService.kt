@@ -101,7 +101,6 @@ class DirectoryMonitorService : Service() {
     override fun onDestroy() {
         fileObserver?.stopWatching()
         fileObserver = null
-        monitorJob?.cancel()
         serviceScope.cancel()
         super.onDestroy()
     }
