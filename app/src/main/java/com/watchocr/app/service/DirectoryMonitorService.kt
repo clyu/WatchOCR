@@ -33,6 +33,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.io.IOException
 
@@ -47,8 +49,15 @@ import java.io.IOException
 class DirectoryMonitorService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val settingsDataStore by lazy { SettingsDataStore(applicationContext) }
     private var monitorJob: Job? = null
     private var cleanupJob: Job? = null
+
+    /** Serializes [reconcileMonitor] so overlapping start() calls cannot race. */
+    private val reconcileLock = Mutex()
+
+    /** Directory the running monitor loop watches; null when no loop is running. */
+    private var watchingDirPath: String? = null
 
     /** Strong reference: a GC'd FileObserver silently stops watching. */
     private var fileObserver: FileObserver? = null
@@ -71,15 +80,11 @@ class DirectoryMonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Restart the loop on every start: MainActivity re-calls start() when
-        // the watched bucket changes, and the loop re-resolves the directory.
-        // Joining the old loop first keeps its cleanup from stopping the new
-        // loop's observer.
-        val previous = monitorJob
-        monitorJob = serviceScope.launch {
-            previous?.cancelAndJoin()
-            monitorLoop()
-        }
+        // start() is called liberally (every app open, configuration change,
+        // watched-bucket change); reconcileMonitor restarts the loop only when
+        // the watched directory actually changed, so a redundant start cannot
+        // cancel (and lose) a file mid-processing.
+        serviceScope.launch { reconcileMonitor() }
         if (cleanupJob?.isActive != true) {
             cleanupJob = serviceScope.launch { cleanupLoop() }
         }
@@ -101,8 +106,13 @@ class DirectoryMonitorService : Service() {
         super.onDestroy()
     }
 
-    private suspend fun monitorLoop() {
-        val settingsDataStore = SettingsDataStore(applicationContext)
+    /**
+     * Resolves the configured directory and (re)starts [monitorLoop] for it,
+     * leaving an already-running loop untouched when the directory is
+     * unchanged. Joining the old loop before starting the new one keeps its
+     * cleanup from stopping the new loop's observer.
+     */
+    private suspend fun reconcileMonitor(): Unit = reconcileLock.withLock {
         val settings = settingsDataStore.settingsFlow.first()
         val bucketId = settings.bucketId
 
@@ -124,8 +134,16 @@ class DirectoryMonitorService : Service() {
             return
         }
 
+        if (monitorJob?.isActive == true && dirPath == watchingDirPath) return
+
+        monitorJob?.cancelAndJoin()
+        watchingDirPath = dirPath
+        monitorJob = serviceScope.launch { monitorLoop(dirPath, settings.bucketName) }
+    }
+
+    private suspend fun monitorLoop(dirPath: String, bucketName: String?) {
         startObserver(dirPath)
-        val idleText = "Watching ${settings.bucketName ?: dirPath} for new images…"
+        val idleText = "Watching ${bucketName ?: dirPath} for new images…"
         updateNotification(lastErrorText ?: idleText)
 
         // Some camera apps close a file, then reopen it to write EXIF and
@@ -218,7 +236,6 @@ class DirectoryMonitorService : Service() {
      * so it applies even when the app UI is never opened.
      */
     private suspend fun cleanupLoop() {
-        val settingsDataStore = SettingsDataStore(applicationContext)
         while (currentCoroutineContext().isActive) {
             HistoryCleanup.deleteOlderThan(applicationContext, settingsDataStore.settingsFlow.first().retentionDays)
             delay(CLEANUP_INTERVAL_MS)

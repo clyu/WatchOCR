@@ -109,8 +109,8 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     }
 
     // Keyed on whether the key exists, not its text: every keystroke in the
-    // API key field writes to DataStore, and restarting the service per
-    // keystroke would cancel (and lose) any file it is processing.
+    // API key field writes to DataStore, and start() is idempotent but not
+    // free — no point invoking startForegroundService per keystroke.
     val hasApiKey = settings?.apiKey?.isNotBlank() == true
     LaunchedEffect(settings?.bucketId, hasApiKey) {
         if (settings?.bucketId != null && hasApiKey) {
