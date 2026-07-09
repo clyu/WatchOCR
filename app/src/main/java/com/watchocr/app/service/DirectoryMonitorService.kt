@@ -137,6 +137,10 @@ class DirectoryMonitorService : Service() {
         if (monitorJob?.isActive == true && dirPath == watchingDirPath) return
 
         monitorJob?.cancelAndJoin()
+        // The old loop's observer is stopped by now and the new one not yet
+        // started, so everything still queued is from the previous folder —
+        // drop it rather than process it under the new folder.
+        while (newFiles.tryReceive().isSuccess) { /* discard */ }
         watchingDirPath = dirPath
         monitorJob = serviceScope.launch { monitorLoop(dirPath, settings.bucketName) }
     }
