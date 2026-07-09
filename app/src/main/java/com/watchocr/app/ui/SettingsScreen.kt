@@ -51,6 +51,7 @@ import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.ImageBucket
 import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.SettingsDataStore
+import com.watchocr.app.service.DirectoryMonitorService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -253,6 +254,14 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                                                 ).show()
                                             } else {
                                                 settingsDataStore.setWatchedBucket(bucket.id, bucket.name, dirPath)
+                                                // Revives a self-stopped service even when the
+                                                // re-selected folder is the one it was already
+                                                // configured for — MainActivity's LaunchedEffect
+                                                // key doesn't change then. start() is idempotent,
+                                                // so a running service is unaffected.
+                                                if (apiKey.isNotBlank()) {
+                                                    DirectoryMonitorService.start(context)
+                                                }
                                             }
                                             pickerBuckets = null
                                         }
