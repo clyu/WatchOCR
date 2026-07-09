@@ -90,8 +90,14 @@ object OcrProcessor {
                 analysis = geminiResult.analysis
             )
 
-            val dao = AppDatabase.getInstance(context).ocrRecordDao()
-            dao.insert(record)
+            try {
+                AppDatabase.getInstance(context).ocrRecordDao().insert(record)
+            } catch (e: Exception) {
+                // The record never made it into the database, so nothing would
+                // ever clean up the image copy — remove it here.
+                imageFile.delete()
+                throw e
+            }
 
             Result.success(record)
         } catch (e: CancellationException) {
