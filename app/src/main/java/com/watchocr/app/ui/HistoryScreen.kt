@@ -27,6 +27,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,7 +67,10 @@ fun HistoryScreen() {
     }
 
     val listState = rememberLazyListState()
-    var lastTopId by remember { mutableStateOf<Long?>(null) }
+    // Saveable so a configuration change (screen rotation) restores it along
+    // with listState's scroll position: the top id is then unchanged, no
+    // scroll happens, and the restored position survives.
+    var lastTopId by rememberSaveable { mutableStateOf<Long?>(null) }
 
     // Records are ordered newest-first; whenever a new record becomes the top
     // one (e.g. the background monitor added a result while the app was in
@@ -74,12 +78,16 @@ fun HistoryScreen() {
     LaunchedEffect(records) {
         val newTopId = records.firstOrNull()?.id
         if (newTopId != null && newTopId != lastTopId) {
-            if (lastTopId == null) {
+            val isFirstLoad = lastTopId == null
+            // Updated before scrolling: a user touch cancels the scroll
+            // animation (and this effect), and the record must not count as
+            // "new" again on the next emission.
+            lastTopId = newTopId
+            if (isFirstLoad) {
                 listState.scrollToItem(0)
             } else {
                 listState.animateScrollToItem(0)
             }
-            lastTopId = newTopId
         }
     }
 
