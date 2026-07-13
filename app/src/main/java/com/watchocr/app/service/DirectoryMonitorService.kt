@@ -92,6 +92,8 @@ class DirectoryMonitorService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // Deliberate: swiping the app away from recents is the user's way of
+    // stopping monitoring; opening the app again resumes it.
     override fun onTaskRemoved(rootIntent: Intent?) {
         stopSelf()
         super.onTaskRemoved(rootIntent)

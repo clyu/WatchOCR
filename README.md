@@ -4,7 +4,7 @@ An Android app that watches a folder for new screenshots/images, runs each one t
 
 ## Features
 
-- **Folder monitoring**: pick an image folder (e.g. Screenshots) and a foreground service watches its directory with `FileObserver` (inotify). An image is picked up only when its write completes (`CLOSE_WRITE`) or it is moved into the folder (`MOVED_TO`), so half-written files are never uploaded. Transient failures (network, HTTP 429/5xx) are retried a few times in place; permanent ones (invalid API key, unprocessable image) are not.
+- **Folder monitoring**: pick an image folder (e.g. Screenshots) and a foreground service watches its directory with `FileObserver` (inotify). An image is picked up only when its write completes (`CLOSE_WRITE`) or it is moved into the folder (`MOVED_TO`), so half-written files are never uploaded. Transient failures (network, HTTP 429/5xx) are retried a few times in place; permanent ones (invalid API key, unprocessable image) are not. Swiping the app away from the recents screen deliberately stops monitoring; opening the app again resumes it.
 - **Manual import**: pick a single image from the History tab at any time, independent of the watched folder.
 - **OCR + translation + analysis**: each image is sent to the Gemini API, which returns the extracted text, a Traditional Chinese translation, and explanations for any idioms/slang, via a structured JSON response schema.
 - **History**: a scrollable list of past results with the source thumbnail, timestamp, extracted text (tap to copy), translation, and idiom/slang analysis. Newly arrived results automatically scroll into view.
