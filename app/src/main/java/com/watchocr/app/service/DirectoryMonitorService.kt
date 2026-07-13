@@ -218,15 +218,16 @@ class DirectoryMonitorService : Service() {
 
     private suspend fun processWithRetry(file: File, apiKey: String, model: String): Result<OcrRecord> {
         val uri = Uri.fromFile(file)
-        var result = OcrProcessor.processImage(applicationContext, uri, apiKey, model)
         var attempt = 1
-        while (result.isFailure && attempt < MAX_ATTEMPTS && isRetryable(result.exceptionOrNull())) {
+        while (true) {
+            val result = OcrProcessor.processImage(applicationContext, uri, apiKey, model)
+            if (result.isSuccess || attempt >= MAX_ATTEMPTS || !isRetryable(result.exceptionOrNull())) {
+                return result
+            }
             Log.w(TAG, "retrying ${file.name} (attempt ${attempt + 1}): ${result.exceptionOrNull()?.message}")
             delay(RETRY_DELAY_MS)
-            result = OcrProcessor.processImage(applicationContext, uri, apiKey, model)
             attempt++
         }
-        return result
     }
 
     /**
