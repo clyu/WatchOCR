@@ -35,7 +35,6 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -47,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.SettingsDataStore
@@ -108,7 +108,7 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     val settingsDataStore = remember { SettingsDataStore(context) }
     // null until DataStore's first emission; SettingsScreen is not composed
     // before then, so its text fields can seed directly from loaded values.
-    val settings by settingsDataStore.settingsFlow.collectAsState(initial = null)
+    val settings by settingsDataStore.settingsFlow.collectAsStateWithLifecycle(initialValue = null)
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -116,7 +116,7 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     // Manual imports and the directory-monitor service both run OCR through
     // OcrProcessor, which counts every in-flight job — the single source for
     // the FAB spinner.
-    val ocrJobs by OcrProcessor.activeJobs.collectAsState()
+    val ocrJobs by OcrProcessor.activeJobs.collectAsStateWithLifecycle()
     val isProcessing = ocrJobs > 0
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 

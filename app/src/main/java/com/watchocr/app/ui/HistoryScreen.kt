@@ -23,7 +23,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +37,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.watchocr.app.data.AppDatabase
 import com.watchocr.app.data.OcrRecord
@@ -52,7 +52,7 @@ private val dateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefau
 fun HistoryScreen() {
     val context = LocalContext.current
     val db = remember { AppDatabase.getInstance(context) }
-    val records by db.ocrRecordDao().getAll().collectAsState(initial = emptyList())
+    val records by db.ocrRecordDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
     val clipboardManager = LocalClipboardManager.current
 
     if (records.isEmpty()) {
