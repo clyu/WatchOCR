@@ -19,8 +19,7 @@ object MediaStoreImages {
             MediaStore.Images.Media.BUCKET_ID,
             MediaStore.Images.Media.BUCKET_DISPLAY_NAME
         )
-        val names = LinkedHashMap<Long, String>()
-        val counts = HashMap<Long, Int>()
+        val buckets = LinkedHashMap<Long, ImageBucket>()
         context.contentResolver.query(
             MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
             projection,
@@ -32,11 +31,11 @@ object MediaStoreImages {
             val nameCol = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.BUCKET_DISPLAY_NAME)
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(idCol)
-                names.getOrPut(id) { cursor.getString(nameCol) ?: "(unnamed)" }
-                counts[id] = (counts[id] ?: 0) + 1
+                buckets[id] = buckets[id]?.let { it.copy(imageCount = it.imageCount + 1) }
+                    ?: ImageBucket(id, cursor.getString(nameCol) ?: "(unnamed)", 1)
             }
         }
-        return names.map { (id, name) -> ImageBucket(id, name, counts[id] ?: 0) }
+        return buckets.values.toList()
     }
 
     /**
