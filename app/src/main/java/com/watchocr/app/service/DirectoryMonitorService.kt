@@ -69,7 +69,7 @@ class DirectoryMonitorService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
+        createNotificationChannels()
         val notification = buildNotification("Watching for new images…")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -246,17 +246,32 @@ class DirectoryMonitorService : Service() {
         }
     }
 
-    private fun createNotificationChannel() {
-        val channel = android.app.NotificationChannel(
-            MONITOR_CHANNEL_ID,
-            "Directory Monitor",
-            NotificationManager.IMPORTANCE_LOW
+    private fun createNotificationChannels() {
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
+            android.app.NotificationChannel(
+                MONITOR_CHANNEL_ID,
+                "Directory Monitor",
+                NotificationManager.IMPORTANCE_LOW
+            )
         )
-        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        // Alerts ask the user to act (monitoring stopped, folder gone), so they
+        // must be audible/heads-up — unlike the silent ongoing status channel.
+        manager.createNotificationChannel(
+            android.app.NotificationChannel(
+                ALERT_CHANNEL_ID,
+                "Monitoring Alerts",
+                NotificationManager.IMPORTANCE_DEFAULT
+            )
+        )
     }
 
-    private fun buildNotification(text: String, ongoing: Boolean = true): Notification {
-        return NotificationCompat.Builder(this, MONITOR_CHANNEL_ID)
+    private fun buildNotification(
+        text: String,
+        ongoing: Boolean = true,
+        channelId: String = MONITOR_CHANNEL_ID
+    ): Notification {
+        return NotificationCompat.Builder(this, channelId)
             .setContentTitle("WatchOCR")
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
@@ -273,13 +288,16 @@ class DirectoryMonitorService : Service() {
     /** A dismissible notification that outlives the service (and its foreground notification). */
     private fun postAlertNotification(text: String) {
         getSystemService(NotificationManager::class.java)
-            .notify(ALERT_NOTIFICATION_ID, buildNotification(text, ongoing = false))
+            .notify(ALERT_NOTIFICATION_ID, buildNotification(text, ongoing = false, channelId = ALERT_CHANNEL_ID))
     }
 
     companion object {
         private const val TAG = "WatchOCR"
 
         private const val MONITOR_CHANNEL_ID = "directory_monitor"
+
+        /** For [postAlertNotification]; higher importance than the silent monitor channel. */
+        private const val ALERT_CHANNEL_ID = "monitor_alerts"
 
         private const val NOTIFICATION_ID = 1001
 
