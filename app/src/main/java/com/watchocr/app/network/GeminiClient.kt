@@ -1,5 +1,6 @@
 package com.watchocr.app.network
 
+import com.watchocr.app.data.AnalysisItem
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -14,7 +15,7 @@ import java.util.concurrent.TimeUnit
 data class GeminiOcrResult(
     val ocr: String,
     val translation: String,
-    val analysis: List<String>
+    val analysis: List<AnalysisItem>
 )
 
 /**
@@ -31,7 +32,8 @@ class ApiHttpException(val code: Int, message: String) : Exception(message)
 object GeminiClient {
 
     private const val PROMPT =
-        "Extract text from the image, translate it to Traditional Chinese, and explain any idioms or slang."
+        "Extract text from the image, translate it to Traditional Chinese, and explain any idioms or slang. " +
+            "If an idiom or slang expression contains kanji, also provide its reading as furigana (振り仮名)."
 
     /** Error details shown to the user (snackbar/notification) are capped at this length. */
     private const val MAX_ERROR_DETAIL_CHARS = 200
@@ -89,10 +91,30 @@ object GeminiClient {
                 })
                 put("analysis", JSONObject().apply {
                     put("type", "array")
-                    put("items", JSONObject().put("type", "string"))
+                    put("items", JSONObject().apply {
+                        put("type", "object")
+                        put("properties", JSONObject().apply {
+                            put("expression", JSONObject().apply {
+                                put("type", "string")
+                                put("description", "The idiom or slang expression as it appears in the extracted text.")
+                            })
+                            put("furigana", JSONObject().apply {
+                                put("type", "string")
+                                put(
+                                    "description",
+                                    "Reading of the expression as furigana (振り仮名). Only provide this when the expression contains kanji."
+                                )
+                            })
+                            put("explanation", JSONObject().apply {
+                                put("type", "string")
+                                put("description", "Explanation of the expression in Traditional Chinese.")
+                            })
+                        })
+                        put("required", JSONArray().put("expression").put("explanation"))
+                    })
                     put(
                         "description",
-                        "Array of explanations for idioms or slang found in the extracted text in Traditional Chinese."
+                        "Array of idioms or slang found in the extracted text, each with an explanation in Traditional Chinese."
                     )
                 })
             })
@@ -162,7 +184,16 @@ object GeminiClient {
             )
         }
         val analysis = resultJson.optJSONArray("analysis")
-            ?.let { array -> (0 until array.length()).map(array::getString) }
+            ?.let { array ->
+                (0 until array.length()).mapNotNull { index ->
+                    val item = array.optJSONObject(index) ?: return@mapNotNull null
+                    AnalysisItem(
+                        expression = item.optString("expression"),
+                        furigana = item.optString("furigana").takeIf { it.isNotEmpty() },
+                        explanation = item.optString("explanation")
+                    )
+                }
+            }
             .orEmpty()
 
         return Result.success(

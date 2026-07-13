@@ -149,7 +149,13 @@ private fun OcrRecordCard(record: OcrRecord, onCopyOcrText: () -> Unit) {
                 Spacer(Modifier.height(8.dp))
                 Text("Idiom / Slang Analysis", style = MaterialTheme.typography.labelLarge)
                 record.analysis.forEachIndexed { index, item ->
-                    Text("${index + 1}. $item", style = MaterialTheme.typography.bodyMedium)
+                    val line = if (item.expression.isBlank()) {
+                        item.explanation
+                    } else {
+                        val furigana = item.furigana?.let { " ($it)" }.orEmpty()
+                        "${item.expression}$furigana: ${item.explanation}"
+                    }
+                    Text("${index + 1}. $line", style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
