@@ -35,6 +35,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.IOException
 
 /**
@@ -230,10 +231,16 @@ class DirectoryMonitorService : Service() {
 
     /**
      * 4xx responses other than 429 are permanent (invalid API key: 400/403,
-     * unprocessable image: 400) — retrying them is pointless.
+     * unprocessable image: 400) — retrying them is pointless. So is a file
+     * deleted/renamed after its event (FileNotFoundException): it won't
+     * reappear, and if it does it fires a new event.
      */
-    private fun isRetryable(e: Throwable?): Boolean =
-        e is IOException || (e is ApiHttpException && (e.code == 429 || e.code in 500..599))
+    private fun isRetryable(e: Throwable?): Boolean = when (e) {
+        is FileNotFoundException -> false
+        is IOException -> true
+        is ApiHttpException -> e.code == 429 || e.code in 500..599
+        else -> false
+    }
 
     /**
      * Long-running service: enforces the history retention setting periodically,
