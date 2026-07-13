@@ -56,12 +56,27 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
-/** Permission needed to query MediaStore for images on this OS version. */
+/** Permission granting access to all images on this OS version. */
 private val mediaImagesPermission: String
     get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
         Manifest.permission.READ_MEDIA_IMAGES
     } else {
         Manifest.permission.READ_EXTERNAL_STORAGE
+    }
+
+/**
+ * Permissions requested together when access is missing. Watching a folder
+ * needs access to every image that lands in it, so partial ("selected
+ * photos") access is not enough — but READ_MEDIA_VISUAL_USER_SELECTED is
+ * still requested alongside on Android 14+: for a user who previously chose
+ * partial access, re-requesting then shows the upgrade dialog with an
+ * "Allow all" option instead of being flatly denied.
+ */
+private val mediaImagesRequest: Array<String>
+    get() = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+        arrayOf(mediaImagesPermission, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
+    } else {
+        arrayOf(mediaImagesPermission)
     }
 
 /** Auto-delete choices: days to keep OCR results, 0 = keep forever. */
@@ -99,12 +114,18 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { granted ->
-        if (granted) {
-            openFolderPicker()
-        } else {
-            Toast.makeText(context, "Photo access is required to choose a folder.", Toast.LENGTH_LONG).show()
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val partialAccess = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            results[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true
+        when {
+            results[mediaImagesPermission] == true -> openFolderPicker()
+            partialAccess -> Toast.makeText(
+                context,
+                "Watching a folder needs access to all photos — tap Choose Folder again and allow access to all photos.",
+                Toast.LENGTH_LONG
+            ).show()
+            else -> Toast.makeText(context, "Photo access is required to choose a folder.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -118,11 +139,10 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
         Text("Monitored Folder", style = MaterialTheme.typography.titleMedium)
         Text(settings.bucketName ?: "No folder selected", style = MaterialTheme.typography.bodyMedium)
         Button(onClick = {
-            val permission = mediaImagesPermission
-            if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(context, mediaImagesPermission) == PackageManager.PERMISSION_GRANTED) {
                 openFolderPicker()
             } else {
-                permissionLauncher.launch(permission)
+                permissionLauncher.launch(mediaImagesRequest)
             }
         }) {
             Text("Choose Folder")

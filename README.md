@@ -14,6 +14,7 @@ An Android app that watches a folder for new screenshots/images, runs each one t
 
 - A Gemini API key (create one in [Google AI Studio](https://aistudio.google.com/)).
 - Android 8.0 (API 26) or later.
+- Full photo access. On Android 14+ the partial "selected photos" option is not enough to watch a folder; the app detects it and asks to allow access to all photos instead.
 
 ## Building
 
