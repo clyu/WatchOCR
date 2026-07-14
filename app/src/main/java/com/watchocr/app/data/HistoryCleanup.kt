@@ -1,6 +1,8 @@
 package com.watchocr.app.data
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -21,10 +23,12 @@ object HistoryCleanup {
         deleteBefore(context, Long.MAX_VALUE)
     }
 
-    private suspend fun deleteBefore(context: Context, cutoffMillis: Long) {
+    // Main-safe: the image files are deleted off the main thread (Room's
+    // suspend DAO methods already are), so callers may invoke this from UI code.
+    private suspend fun deleteBefore(context: Context, cutoffMillis: Long) = withContext(Dispatchers.IO) {
         val dao = AppDatabase.getInstance(context).ocrRecordDao()
         val expired = dao.getOlderThan(cutoffMillis)
-        if (expired.isEmpty()) return
+        if (expired.isEmpty()) return@withContext
         expired.forEach { File(it.imagePath).delete() }
         // Chunked to stay under SQLite's bound-variable limit.
         expired.map { it.id }.chunked(500).forEach { dao.deleteByIds(it) }
