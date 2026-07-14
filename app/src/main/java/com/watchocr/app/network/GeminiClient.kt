@@ -186,12 +186,7 @@ object GeminiClient {
         val analysis = resultJson.optJSONArray("analysis")
             ?.let { array ->
                 (0 until array.length()).mapNotNull { index ->
-                    val item = array.optJSONObject(index) ?: return@mapNotNull null
-                    AnalysisItem(
-                        expression = item.optString("expression"),
-                        furigana = item.optString("furigana").takeIf { it.isNotEmpty() },
-                        explanation = item.optString("explanation")
-                    )
+                    array.optJSONObject(index)?.let(AnalysisItem::fromJson)
                 }
             }
             .orEmpty()
