@@ -75,8 +75,8 @@ object OcrProcessor {
             val (bytes, mimeType) = prepareForUpload(rawBytes, rawMime)
             val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
+            // Throws on failure; the catch below turns that into this Result.
             val geminiResult = GeminiClient.ocrAndTranslate(apiKey, model, base64Data, mimeType)
-                .getOrElse { return@withContext Result.failure(it) }
 
             val imagesDir = File(context.filesDir, "images").apply { mkdirs() }
             val extension = if (mimeType.contains("png")) "png" else "jpg"

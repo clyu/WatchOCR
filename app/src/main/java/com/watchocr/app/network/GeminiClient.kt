@@ -1,7 +1,6 @@
 package com.watchocr.app.network
 
 import com.watchocr.app.data.AnalysisItem
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -44,36 +43,34 @@ object GeminiClient {
         .writeTimeout(120, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * Throws on failure — [ApiHttpException] for a non-2xx response,
+     * [java.io.IOException] for network errors, plain [Exception] for an
+     * unusable response body; OcrProcessor (the only caller) wraps errors
+     * into its `Result`.
+     */
     suspend fun ocrAndTranslate(
         apiKey: String,
         model: String,
         base64Data: String,
         mimeType: String
-    ): Result<GeminiOcrResult> = withContext(Dispatchers.IO) {
-        try {
-            val payload = buildRequestPayload(base64Data, mimeType)
-            val request = Request.Builder()
-                .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
-                .addHeader("x-goog-api-key", apiKey)
-                .post(payload.toString().toRequestBody("application/json".toMediaType()))
-                .build()
+    ): GeminiOcrResult = withContext(Dispatchers.IO) {
+        val payload = buildRequestPayload(base64Data, mimeType)
+        val request = Request.Builder()
+            .url("https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent")
+            .addHeader("x-goog-api-key", apiKey)
+            .post(payload.toString().toRequestBody("application/json".toMediaType()))
+            .build()
 
-            client.newCall(request).execute().use { response ->
-                val bodyString = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    return@withContext Result.failure(
-                        ApiHttpException(
-                            response.code,
-                            "API request failed with HTTP ${response.code}: ${extractApiError(bodyString)}"
-                        )
-                    )
-                }
-                parseResponse(bodyString)
+        client.newCall(request).execute().use { response ->
+            val bodyString = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw ApiHttpException(
+                    response.code,
+                    "API request failed with HTTP ${response.code}: ${extractApiError(bodyString)}"
+                )
             }
-        } catch (e: CancellationException) {
-            throw e // cancellation must propagate, not surface as a failed OCR
-        } catch (e: Exception) {
-            Result.failure(e)
+            parseResponse(bodyString)
         }
     }
 
@@ -142,22 +139,20 @@ object GeminiClient {
         }
     }
 
-    private fun parseResponse(body: String): Result<GeminiOcrResult> {
+    private fun parseResponse(body: String): GeminiOcrResult {
         val root = JSONObject(body)
         val candidates = root.optJSONArray("candidates")
         if (candidates == null || candidates.length() == 0) {
             val blockReason = root.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
-            return Result.failure(
-                Exception(
-                    if (blockReason.isNotEmpty()) "Request was blocked by the API (reason: $blockReason)."
-                    else "API response contained no candidates."
-                )
+            throw Exception(
+                if (blockReason.isNotEmpty()) "Request was blocked by the API (reason: $blockReason)."
+                else "API response contained no candidates."
             )
         }
         val candidate = candidates.getJSONObject(0)
         val finishReason = candidate.optString("finishReason")
         val parts = candidate.optJSONObject("content")?.optJSONArray("parts")
-            ?: return Result.failure(Exception(noTextMessage(finishReason)))
+            ?: throw Exception(noTextMessage(finishReason))
 
         val rawText = (0 until parts.length()).asSequence()
             .map { parts.getJSONObject(it) }
@@ -165,7 +160,7 @@ object GeminiClient {
             ?.getString("text")
 
         if (rawText.isNullOrEmpty()) {
-            return Result.failure(Exception(noTextMessage(finishReason)))
+            throw Exception(noTextMessage(finishReason))
         }
 
         // Strip Markdown code block markers (e.g. ```json) some models mistakenly append.
@@ -176,11 +171,9 @@ object GeminiClient {
         val resultJson = try {
             JSONObject(cleanedJson)
         } catch (e: Exception) {
-            return Result.failure(
-                Exception(
-                    if (finishReason == "MAX_TOKENS") "Model response was truncated (MAX_TOKENS)."
-                    else "Model returned malformed JSON: ${cleanedJson.take(MAX_ERROR_DETAIL_CHARS)}"
-                )
+            throw Exception(
+                if (finishReason == "MAX_TOKENS") "Model response was truncated (MAX_TOKENS)."
+                else "Model returned malformed JSON: ${cleanedJson.take(MAX_ERROR_DETAIL_CHARS)}"
             )
         }
         val analysis = resultJson.optJSONArray("analysis")
@@ -191,12 +184,10 @@ object GeminiClient {
             }
             .orEmpty()
 
-        return Result.success(
-            GeminiOcrResult(
-                ocr = resultJson.optString("ocr"),
-                translation = resultJson.optString("translation"),
-                analysis = analysis
-            )
+        return GeminiOcrResult(
+            ocr = resultJson.optString("ocr"),
+            translation = resultJson.optString("translation"),
+            analysis = analysis
         )
     }
 
