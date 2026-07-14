@@ -326,9 +326,5 @@ class DirectoryMonitorService : Service() {
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, DirectoryMonitorService::class.java))
         }
-
-        fun stop(context: Context) {
-            context.stopService(Intent(context, DirectoryMonitorService::class.java))
-        }
     }
 }
