@@ -52,7 +52,11 @@ private val dateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefau
 fun HistoryScreen() {
     val context = LocalContext.current
     val db = remember { AppDatabase.getInstance(context) }
-    val records by db.ocrRecordDao().getAll().collectAsStateWithLifecycle(initialValue = emptyList())
+    // null until Room's first emission; rendering nothing for that moment
+    // (instead of the empty-state text) keeps "No OCR history yet" from
+    // flashing on every open when history actually exists.
+    val records = db.ocrRecordDao().getAll()
+        .collectAsStateWithLifecycle(initialValue = null).value ?: return
     val clipboardManager = LocalClipboardManager.current
 
     if (records.isEmpty()) {
