@@ -74,50 +74,47 @@ object GeminiClient {
         }
     }
 
-    private fun buildRequestPayload(base64Data: String, mimeType: String): JSONObject {
-        val schema = JSONObject().apply {
-            put("type", "object")
-            put("properties", JSONObject().apply {
-                put("ocr", JSONObject().apply {
-                    put("type", "string")
-                    put("description", "Extracted text from the image.")
-                })
-                put("translation", JSONObject().apply {
-                    put("type", "string")
-                    put("description", "Extracted text translated into Traditional Chinese.")
-                })
-                put("analysis", JSONObject().apply {
-                    put("type", "array")
-                    put("items", JSONObject().apply {
-                        put("type", "object")
-                        put("properties", JSONObject().apply {
-                            put("expression", JSONObject().apply {
-                                put("type", "string")
-                                put("description", "The idiom or slang expression as it appears in the extracted text.")
-                            })
-                            put("furigana", JSONObject().apply {
-                                put("type", "string")
-                                put(
-                                    "description",
-                                    "Reading of the expression as furigana (振り仮名). Only provide this when the expression contains kanji."
-                                )
-                            })
-                            put("explanation", JSONObject().apply {
-                                put("type", "string")
-                                put("description", "Explanation of the expression in Traditional Chinese.")
-                            })
-                        })
-                        put("required", JSONArray().put("expression").put("explanation"))
-                    })
-                    put(
-                        "description",
-                        "Array of idioms or slang found in the extracted text, each with an explanation in Traditional Chinese."
-                    )
-                })
-            })
-            put("required", JSONArray().put("ocr").put("translation").put("analysis"))
+    /** Response schema for the structured JSON output; see [GeminiOcrResult]. */
+    private val RESPONSE_SCHEMA = """
+        {
+          "type": "object",
+          "properties": {
+            "ocr": {
+              "type": "string",
+              "description": "Extracted text from the image."
+            },
+            "translation": {
+              "type": "string",
+              "description": "Extracted text translated into Traditional Chinese."
+            },
+            "analysis": {
+              "type": "array",
+              "description": "Array of idioms or slang found in the extracted text, each with an explanation in Traditional Chinese.",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "expression": {
+                    "type": "string",
+                    "description": "The idiom or slang expression as it appears in the extracted text."
+                  },
+                  "furigana": {
+                    "type": "string",
+                    "description": "Reading of the expression as furigana (振り仮名). Only provide this when the expression contains kanji."
+                  },
+                  "explanation": {
+                    "type": "string",
+                    "description": "Explanation of the expression in Traditional Chinese."
+                  }
+                },
+                "required": ["expression", "explanation"]
+              }
+            }
+          },
+          "required": ["ocr", "translation", "analysis"]
         }
+    """.trimIndent()
 
+    private fun buildRequestPayload(base64Data: String, mimeType: String): JSONObject {
         val parts = JSONArray()
             .put(JSONObject().put("text", PROMPT))
             .put(
@@ -134,7 +131,9 @@ object GeminiClient {
             put("contents", JSONArray().put(JSONObject().put("parts", parts)))
             put("generationConfig", JSONObject().apply {
                 put("responseMimeType", "application/json")
-                put("responseSchema", schema)
+                // Parsed per request: JSONObject is mutable, so a shared
+                // instance embedded in payloads would be easy to corrupt.
+                put("responseSchema", JSONObject(RESPONSE_SCHEMA))
             })
         }
     }
