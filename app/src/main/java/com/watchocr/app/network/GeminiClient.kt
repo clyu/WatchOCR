@@ -25,8 +25,8 @@ data class GeminiOcrResult(
 class ApiHttpException(val code: Int, message: String) : Exception(message)
 
 /**
- * Mirrors the request/response contract of gemini_ocr_trans.sh: a single
- * generateContent call with inline image data and a structured JSON response schema.
+ * Client for the Gemini API: a single generateContent call with inline image
+ * data and a structured JSON response schema.
  */
 object GeminiClient {
 
