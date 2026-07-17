@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Visibility
@@ -42,6 +43,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -98,7 +100,10 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
     // composed before DataStore's first emission). Keying remember on the
     // round-tripped settings value would let a stale DataStore emission reset
     // the field mid-typing and drop keystrokes.
-    var apiKey by rememberSaveable { mutableStateOf(settings.apiKey) }
+    // remember, not rememberSaveable: the key must not land in the saved
+    // instance state Bundle in plain text. Re-seeding from [settings] after a
+    // configuration change is equivalent anyway, since every edit is persisted.
+    var apiKey by remember { mutableStateOf(settings.apiKey) }
     var model by rememberSaveable { mutableStateOf(settings.model) }
     var apiKeyVisible by remember { mutableStateOf(false) }
 
@@ -159,6 +164,9 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             },
             label = { Text("API Key") },
             singleLine = true,
+            // Password keyboard: keeps the IME from learning the key and
+            // offering it back as a suggestion in other apps.
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             visualTransformation = if (apiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
             trailingIcon = {
                 IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
