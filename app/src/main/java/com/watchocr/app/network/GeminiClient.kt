@@ -162,17 +162,14 @@ object GeminiClient {
             throw Exception(noTextMessage(finishReason))
         }
 
-        // Strip Markdown code block markers (e.g. ```json) some models mistakenly append.
-        val cleanedJson = rawText.lineSequence()
-            .filterNot { it.trim().startsWith("```") }
-            .joinToString("\n")
-
+        // The request forces structured output (responseMimeType + responseSchema),
+        // so the text part is plain JSON — no Markdown fences to strip.
         val resultJson = try {
-            JSONObject(cleanedJson)
+            JSONObject(rawText)
         } catch (e: Exception) {
             throw Exception(
                 if (finishReason == "MAX_TOKENS") "Model response was truncated (MAX_TOKENS)."
-                else "Model returned malformed JSON: ${cleanedJson.take(MAX_ERROR_DETAIL_CHARS)}"
+                else "Model returned malformed JSON: ${rawText.take(MAX_ERROR_DETAIL_CHARS)}"
             )
         }
         val analysis = resultJson.optJSONArray("analysis")
