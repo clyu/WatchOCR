@@ -51,12 +51,14 @@ private val dateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefau
 @Composable
 fun HistoryScreen() {
     val context = LocalContext.current
-    val db = remember { AppDatabase.getInstance(context) }
+    // Remembered so recompositions keep collecting the same Flow instance —
+    // collectAsStateWithLifecycle keys on it, and a fresh Flow per
+    // recomposition would restart the Room query every time.
+    val recordsFlow = remember { AppDatabase.getInstance(context).ocrRecordDao().getAll() }
     // null until Room's first emission; rendering nothing for that moment
     // (instead of the empty-state text) keeps "No OCR history yet" from
     // flashing on every open when history actually exists.
-    val records = db.ocrRecordDao().getAll()
-        .collectAsStateWithLifecycle(initialValue = null).value ?: return
+    val records = recordsFlow.collectAsStateWithLifecycle(initialValue = null).value ?: return
     val clipboardManager = LocalClipboardManager.current
 
     if (records.isEmpty()) {
