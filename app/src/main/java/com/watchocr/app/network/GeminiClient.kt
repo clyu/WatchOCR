@@ -35,7 +35,7 @@ object GeminiClient {
             "If an idiom or slang expression contains kanji, also provide its reading as furigana (振り仮名)."
 
     /** Error details shown to the user (snackbar/notification) are capped at this length. */
-    private const val MAX_ERROR_DETAIL_CHARS = 200
+    const val MAX_ERROR_DETAIL_CHARS = 200
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
