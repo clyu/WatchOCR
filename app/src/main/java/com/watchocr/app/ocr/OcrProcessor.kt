@@ -3,6 +3,8 @@ package com.watchocr.app.ocr
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.net.Uri
 import android.util.Base64
 import com.watchocr.app.data.AppDatabase
@@ -130,12 +132,50 @@ object OcrProcessor {
         while (maxDimension / sampleSize > MAX_DIMENSION) sampleSize *= 2
 
         val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+        val decoded = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
             ?: return bytes to mimeType
+        val bitmap = applyJpegExifOrientation(decoded, bytes, mimeType)
         val output = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, output)
         bitmap.recycle()
         return output.toByteArray() to "image/jpeg"
+    }
+
+    /**
+     * BitmapFactory ignores a JPEG's EXIF orientation (unlike HEIF, where the
+     * decoder applies the container's rotation itself), and re-encoding drops
+     * the EXIF data entirely — so without this a rotated camera photo would be
+     * uploaded and stored lying on its side. JPEG-only on purpose: consulting
+     * EXIF for formats the decoder already orients would double-rotate them.
+     */
+    private fun applyJpegExifOrientation(bitmap: Bitmap, bytes: ByteArray, mimeType: String): Bitmap {
+        if (mimeType != "image/jpeg") return bitmap
+        val orientation = try {
+            ExifInterface(bytes.inputStream())
+                .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+        } catch (e: Exception) {
+            return bitmap // no/corrupt EXIF — treat as upright
+        }
+        val matrix = Matrix()
+        when (orientation) {
+            ExifInterface.ORIENTATION_ROTATE_90 -> matrix.postRotate(90f)
+            ExifInterface.ORIENTATION_ROTATE_180 -> matrix.postRotate(180f)
+            ExifInterface.ORIENTATION_ROTATE_270 -> matrix.postRotate(270f)
+            ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.postScale(-1f, 1f)
+            ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.postScale(1f, -1f)
+            ExifInterface.ORIENTATION_TRANSPOSE -> {
+                matrix.postRotate(90f)
+                matrix.postScale(-1f, 1f)
+            }
+            ExifInterface.ORIENTATION_TRANSVERSE -> {
+                matrix.postRotate(270f)
+                matrix.postScale(-1f, 1f)
+            }
+            else -> return bitmap
+        }
+        val oriented = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        if (oriented != bitmap) bitmap.recycle()
+        return oriented
     }
 
     private fun guessMimeType(uri: Uri): String =
