@@ -115,12 +115,13 @@ class DirectoryMonitorService : Service() {
      */
     private suspend fun reconcileMonitor(): Unit = reconcileLock.withLock {
         val settings = settingsDataStore.settingsFlow.first()
-        val bucketId = settings.bucketId
 
-        if (bucketId == null || settings.apiKey.isBlank()) {
+        if (!settings.canMonitor) {
             stopSelf()
             return
         }
+        // canMonitor guarantees a bucketId.
+        val bucketId = checkNotNull(settings.bucketId)
 
         // Installs upgraded from the MediaStore-based version have a bucketId
         // but no persisted path — resolve it once and persist.

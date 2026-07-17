@@ -136,12 +136,13 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
         }
     }
 
-    // Keyed on whether the key exists, not its text: every keystroke in the
-    // API key field writes to DataStore, and start() is idempotent but not
-    // free — no point invoking startForegroundService per keystroke.
-    val hasApiKey = settings?.apiKey?.isNotBlank() == true
-    LaunchedEffect(settings?.bucketId, hasApiKey) {
-        if (settings?.bucketId != null && hasApiKey) {
+    // Keyed on canMonitor (does a key exist), not the key's text: every
+    // keystroke in the API key field writes to DataStore, and start() is
+    // idempotent but not free — no point invoking startForegroundService per
+    // keystroke. bucketId stays a key so switching folders restarts the loop.
+    val canMonitor = settings?.canMonitor == true
+    LaunchedEffect(settings?.bucketId, canMonitor) {
+        if (canMonitor) {
             DirectoryMonitorService.start(context)
         }
     }

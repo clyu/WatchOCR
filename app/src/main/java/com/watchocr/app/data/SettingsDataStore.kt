@@ -24,7 +24,14 @@ data class AppSettings(
     val model: String = DEFAULT_MODEL,
     /** OCR results older than this many days are deleted automatically; 0 = keep forever. */
     val retentionDays: Int = 0
-)
+) {
+    /**
+     * Whether directory monitoring can run: a folder to watch and an API key
+     * to process its images with are both configured. The single definition
+     * of the service's start/keep-running precondition.
+     */
+    val canMonitor: Boolean get() = bucketId != null && apiKey.isNotBlank()
+}
 
 class SettingsDataStore(private val context: Context) {
 

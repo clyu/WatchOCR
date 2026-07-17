@@ -55,6 +55,7 @@ import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.service.DirectoryMonitorService
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -287,7 +288,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                                                 // configured for — MainActivity's LaunchedEffect
                                                 // key doesn't change then. start() is idempotent,
                                                 // so a running service is unaffected.
-                                                if (apiKey.isNotBlank()) {
+                                                if (settingsDataStore.settingsFlow.first().canMonitor) {
                                                     DirectoryMonitorService.start(context)
                                                 }
                                             }
