@@ -20,18 +20,25 @@ class ManualOcrViewModel(application: Application) : AndroidViewModel(applicatio
      * the UI's in-flight indicator reads [OcrProcessor.activeJobs] instead. */
     private var isProcessing = false
 
-    private val _errors = Channel<String>(Channel.BUFFERED)
-    val errors = _errors.receiveAsFlow()
+    /** User-facing snackbar messages: failures, and the busy notice below. */
+    private val _messages = Channel<String>(Channel.BUFFERED)
+    val messages = _messages.receiveAsFlow()
 
     fun processImage(uri: Uri, apiKey: String, model: String) {
-        if (isProcessing) return
+        if (isProcessing) {
+            // The FAB stays tappable while processing (only manual imports are
+            // serialized, not the monitor's jobs), so tell the user why the
+            // picked image was not accepted instead of dropping it silently.
+            _messages.trySend("An image is already being processed — please wait for it to finish.")
+            return
+        }
         isProcessing = true
         viewModelScope.launch {
             val result = OcrProcessor.processImage(getApplication(), uri, apiKey, model)
             isProcessing = false
             result.onFailure {
                 val reason = it.message.orEmpty().ifBlank { it.javaClass.simpleName }.take(200)
-                _errors.send("OCR failed: $reason")
+                _messages.send("OCR failed: $reason")
             }
         }
     }

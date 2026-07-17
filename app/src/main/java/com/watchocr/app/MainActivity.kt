@@ -121,7 +121,7 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     LaunchedEffect(Unit) {
-        ocrViewModel.errors.collect { snackbarHostState.showSnackbar(it) }
+        ocrViewModel.messages.collect { snackbarHostState.showSnackbar(it) }
     }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
