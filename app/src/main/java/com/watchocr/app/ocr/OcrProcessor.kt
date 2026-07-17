@@ -35,10 +35,18 @@ object OcrProcessor {
         "webp" to "image/webp",
         "gif" to "image/gif",
         "bmp" to "image/bmp",
-        "heic" to "image/heif",
+        "heic" to "image/heic",
         "heif" to "image/heif",
         "avif" to "image/avif"
     )
+
+    /**
+     * Image MIME types the Gemini API accepts as inline data
+     * (https://ai.google.dev/gemini-api/docs/image-understanding). Accepted
+     * formats outside this set (BMP/GIF/AVIF) are re-encoded as JPEG first.
+     */
+    private val API_SUPPORTED_MIME_TYPES =
+        setOf("image/jpeg", "image/png", "image/webp", "image/heic", "image/heif")
 
     /** Images above these limits are downscaled/re-encoded before upload. */
     private const val MAX_DIMENSION = 1536
@@ -112,21 +120,26 @@ object OcrProcessor {
     }
 
     /**
-     * Keeps small images untouched, but decodes oversized ones with a power-of-two
-     * sample size (bounding peak memory) and re-encodes them as JPEG. The request
-     * uses MEDIA_RESOLUTION_LOW, so the extra resolution would be discarded
-     * server-side anyway; this just avoids OOM on huge photos and stays under the
-     * API's inline-data size limit.
+     * Keeps small images in API-supported formats untouched, but re-encodes as
+     * JPEG anything oversized (decoding with a power-of-two sample size to
+     * bound peak memory) or in a format the API rejects (BMP/GIF/AVIF). The
+     * request uses MEDIA_RESOLUTION_LOW, so the extra resolution would be
+     * discarded server-side anyway; downscaling just avoids OOM on huge photos
+     * and stays under the API's inline-data size limit.
      */
     private fun prepareForUpload(bytes: ByteArray, mimeType: String): Pair<ByteArray, String> {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         val maxDimension = maxOf(bounds.outWidth, bounds.outHeight)
-        // Not decodable locally: BitmapFactory supports fewer formats than the
-        // API (e.g. AVIF before Android 12), so send the bytes as-is and let
-        // the API decide instead of rejecting the file outright.
+        // Not decodable locally (e.g. AVIF before Android 12): converting is
+        // impossible, so send the bytes as-is as a last resort and let the API
+        // report what it can't handle instead of rejecting the file outright.
         if (maxDimension <= 0) return bytes to mimeType
-        if (maxDimension <= MAX_DIMENSION && bytes.size <= MAX_UPLOAD_BYTES) return bytes to mimeType
+        if (maxDimension <= MAX_DIMENSION && bytes.size <= MAX_UPLOAD_BYTES &&
+            mimeType in API_SUPPORTED_MIME_TYPES
+        ) {
+            return bytes to mimeType
+        }
 
         var sampleSize = 1
         while (maxDimension / sampleSize > MAX_DIMENSION) sampleSize *= 2
