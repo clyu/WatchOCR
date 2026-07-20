@@ -100,7 +100,7 @@ object OcrProcessor {
                 analysis = geminiResult.analysis
             )
 
-            try {
+            val id = try {
                 AppDatabase.getInstance(context).ocrRecordDao().insert(record)
             } catch (e: Exception) {
                 // The record never made it into the database, so nothing would
@@ -109,7 +109,9 @@ object OcrProcessor {
                 throw e
             }
 
-            Result.success(record)
+            // insert() returns the generated rowid; carrying it back keeps the
+            // returned record from advertising the unsaved placeholder id 0.
+            Result.success(record.copy(id = id))
         } catch (e: CancellationException) {
             throw e // cancellation must propagate, not surface as a failed OCR
         } catch (e: Exception) {
