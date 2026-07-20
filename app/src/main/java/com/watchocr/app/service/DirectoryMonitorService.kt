@@ -129,10 +129,7 @@ class DirectoryMonitorService : Service() {
             ?: MediaStoreImages.queryBucketPath(applicationContext, bucketId)
                 ?.also { settingsDataStore.setWatchedDirPath(it) }
         if (dirPath == null || !File(dirPath).isDirectory) {
-            // Not updateNotification: stopSelf() removes the foreground
-            // notification, so the message must go out as a standalone one.
-            postAlertNotification("Watched folder unavailable — re-select it in Settings.")
-            stopSelf()
+            stopWithAlert("Watched folder unavailable — re-select it in Settings.")
             return
         }
 
@@ -178,8 +175,7 @@ class DirectoryMonitorService : Service() {
                     // stop instead of burning retries; MainActivity restarts
                     // the service once a key is set again.
                     Log.w(TAG, "API key cleared, stopping monitor")
-                    postAlertNotification("Gemini API key is not set — monitoring stopped. Set it in Settings to resume.")
-                    stopSelf()
+                    stopWithAlert("Gemini API key is not set — monitoring stopped. Set it in Settings to resume.")
                     return
                 }
                 Log.i(TAG, "processing ${file.name}")
@@ -294,10 +290,16 @@ class DirectoryMonitorService : Service() {
         getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(text))
     }
 
-    /** A dismissible notification that outlives the service (and its foreground notification). */
-    private fun postAlertNotification(text: String) {
+    /**
+     * Stops the service, leaving [text] behind as a dismissible notification
+     * that outlives it. Not updateNotification: stopSelf() takes the
+     * foreground notification down with the service, so a message the user
+     * has to act on must go out as a standalone one.
+     */
+    private fun stopWithAlert(text: String) {
         getSystemService(NotificationManager::class.java)
             .notify(ALERT_NOTIFICATION_ID, buildNotification(text, ongoing = false, channelId = ALERT_CHANNEL_ID))
+        stopSelf()
     }
 
     companion object {
@@ -305,12 +307,12 @@ class DirectoryMonitorService : Service() {
 
         private const val MONITOR_CHANNEL_ID = "directory_monitor"
 
-        /** For [postAlertNotification]; higher importance than the silent monitor channel. */
+        /** For [stopWithAlert]; higher importance than the silent monitor channel. */
         private const val ALERT_CHANNEL_ID = "monitor_alerts"
 
         private const val NOTIFICATION_ID = 1001
 
-        /** For [postAlertNotification]; distinct from the foreground notification's ID. */
+        /** For [stopWithAlert]; distinct from the foreground notification's ID. */
         private const val ALERT_NOTIFICATION_ID = 1002
 
         /** Attempts per file for transient (network/429/5xx) failures. */
