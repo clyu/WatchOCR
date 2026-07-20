@@ -145,15 +145,18 @@ class DirectoryMonitorService : Service() {
     }
 
     private suspend fun monitorLoop(dirPath: String, bucketName: String?) {
-        startObserver(dirPath)
         val idleText = "Watching ${bucketName ?: dirPath} for new images…"
-        updateNotification(lastErrorText ?: idleText)
 
         // Some camera apps close a file, then reopen it to write EXIF and
         // close again — two CLOSE_WRITE events for one image.
         val recentlyDone = LinkedHashMap<String, Long>()
 
+        // Inside the try so the finally owns the observer from the moment it
+        // exists: an exception on the way into the loop must not leave a live
+        // observer feeding a channel nobody reads.
         try {
+            startObserver(dirPath)
+            updateNotification(lastErrorText ?: idleText)
             for (file in newFiles) {
                 val now = SystemClock.elapsedRealtime()
                 recentlyDone.entries.removeAll { now - it.value > DEDUP_WINDOW_MS }
@@ -202,7 +205,9 @@ class DirectoryMonitorService : Service() {
 
     @Suppress("DEPRECATION") // String ctor: the File overload is API 29+, minSdk is 26
     private fun startObserver(dirPath: String) {
-        fileObserver?.stopWatching()
+        // No previous observer to stop: reconcileMonitor joins the old
+        // monitorLoop before launching a new one, and that loop's finally
+        // always stops and clears the observer it started.
         fileObserver = object : FileObserver(dirPath, CLOSE_WRITE or MOVED_TO) {
             // Called on FileObserver's own thread: filter cheaply, hand off.
             override fun onEvent(event: Int, path: String?) {
