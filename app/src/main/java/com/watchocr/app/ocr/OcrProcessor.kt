@@ -89,7 +89,7 @@ object OcrProcessor {
             val geminiResult = GeminiClient.ocrAndTranslate(apiKey, model, base64Data, mimeType)
 
             val imagesDir = File(context.filesDir, "images").apply { mkdirs() }
-            val extension = if (mimeType.contains("png")) "png" else "jpg"
+            val extension = extensionForMime(mimeType)
             val imageFile = File(imagesDir, "${UUID.randomUUID()}.$extension")
             imageFile.writeBytes(bytes)
 
@@ -190,6 +190,17 @@ object OcrProcessor {
         if (oriented != bitmap) bitmap.recycle()
         return oriented
     }
+
+    /**
+     * Extension for the stored copy of an image, from the MIME type it was
+     * uploaded as. [prepareForUpload] passes small images in API-supported
+     * formats through untouched, so the copy is not always JPEG or PNG —
+     * naming HEIC or WebP bytes `.jpg` would leave a file whose extension
+     * contradicts its content. [MIME_BY_EXTENSION] iterates in declaration
+     * order, so image/jpeg resolves to "jpg" rather than "jpeg".
+     */
+    private fun extensionForMime(mimeType: String): String =
+        MIME_BY_EXTENSION.entries.firstOrNull { it.value == mimeType }?.key ?: "jpg"
 
     private fun guessMimeType(uri: Uri): String =
         MIME_BY_EXTENSION[uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()]
