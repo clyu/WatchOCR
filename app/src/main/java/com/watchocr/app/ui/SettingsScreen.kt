@@ -82,8 +82,8 @@ private val mediaImagesRequest: Array<String>
         arrayOf(mediaImagesPermission)
     }
 
-/** Auto-delete choices: days to keep OCR results, 0 = keep forever. */
-private val retentionOptions = listOf(
+/** Auto-delete choices: days to keep OCR results -> menu label, 0 = keep forever. */
+private val retentionLabels = mapOf(
     0 to "Never",
     1 to "After 1 day",
     7 to "After 7 days",
@@ -202,8 +202,9 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             onExpandedChange = { retentionMenuExpanded = it }
         ) {
             OutlinedTextField(
-                value = retentionOptions.firstOrNull { it.first == settings.retentionDays }?.second
-                    ?: retentionOptions.first().second,
+                // Any persisted value outside the offered choices reads as "Never",
+                // matching how HistoryCleanup treats anything <= 0.
+                value = retentionLabels[settings.retentionDays] ?: retentionLabels.getValue(0),
                 onValueChange = {},
                 readOnly = true,
                 singleLine = true,
@@ -217,7 +218,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                 expanded = retentionMenuExpanded,
                 onDismissRequest = { retentionMenuExpanded = false }
             ) {
-                retentionOptions.forEach { (days, label) ->
+                retentionLabels.forEach { (days, label) ->
                     DropdownMenuItem(
                         text = { Text(label) },
                         onClick = {
