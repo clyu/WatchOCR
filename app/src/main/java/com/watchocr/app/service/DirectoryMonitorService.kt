@@ -194,7 +194,7 @@ class DirectoryMonitorService : Service() {
                     recentlyDone[file.path] = SystemClock.elapsedRealtime()
                 }.onFailure {
                     Log.w(TAG, "failed ${file.name}: ${it.message}")
-                    lastErrorText = "Failed to process ${file.name}: ${it.message}"
+                    lastErrorText = "Failed to process ${file.name}: ${OcrProcessor.describeFailure(it)}"
                 }
                 updateNotification(lastErrorText ?: idleText)
             }

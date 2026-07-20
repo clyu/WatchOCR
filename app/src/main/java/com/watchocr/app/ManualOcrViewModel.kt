@@ -4,7 +4,6 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.watchocr.app.network.GeminiClient
 import com.watchocr.app.ocr.OcrProcessor
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -37,11 +36,7 @@ class ManualOcrViewModel(application: Application) : AndroidViewModel(applicatio
         viewModelScope.launch {
             val result = OcrProcessor.processImage(getApplication(), uri, apiKey, model)
             isProcessing = false
-            result.onFailure {
-                val reason = it.message.orEmpty().ifBlank { it.javaClass.simpleName }
-                    .take(GeminiClient.MAX_ERROR_DETAIL_CHARS)
-                _messages.send("OCR failed: $reason")
-            }
+            result.onFailure { _messages.send("OCR failed: ${OcrProcessor.describeFailure(it)}") }
         }
     }
 }

@@ -192,6 +192,17 @@ object OcrProcessor {
     }
 
     /**
+     * Renders the failure of a [processImage] `Result` as a short line for a
+     * snackbar or notification. Exceptions carrying no message (some IO
+     * failures) fall back to their class name rather than the string "null",
+     * and the result is capped so an oversized API error body cannot flood the
+     * UI.
+     */
+    fun describeFailure(e: Throwable): String =
+        e.message.orEmpty().ifBlank { e.javaClass.simpleName }
+            .take(GeminiClient.MAX_ERROR_DETAIL_CHARS)
+
+    /**
      * Extension for the stored copy of an image, from the MIME type it was
      * uploaded as. [prepareForUpload] passes small images in API-supported
      * formats through untouched, so the copy is not always JPEG or PNG —
