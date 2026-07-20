@@ -25,10 +25,10 @@ object OcrProcessor {
 
     /**
      * Lowercase filename extension -> MIME type for the image formats the app
-     * accepts. Also the single source of truth for which files the directory
-     * monitor picks up.
+     * accepts. Reached only through [mimeForFileName], which is also the
+     * single source of truth for which files the directory monitor picks up.
      */
-    val MIME_BY_EXTENSION: Map<String, String> = mapOf(
+    private val MIME_BY_EXTENSION: Map<String, String> = mapOf(
         "jpg" to "image/jpeg",
         "jpeg" to "image/jpeg",
         "png" to "image/png",
@@ -215,7 +215,14 @@ object OcrProcessor {
     private fun extensionForMime(mimeType: String): String =
         MIME_BY_EXTENSION.entries.firstOrNull { it.value == mimeType }?.key ?: "jpg"
 
+    /**
+     * MIME type for [fileName] from its extension, or null when the extension
+     * is not one the app accepts. The directory monitor uses the null case to
+     * decide which of the files it is notified about are worth queueing.
+     */
+    fun mimeForFileName(fileName: String): String? =
+        MIME_BY_EXTENSION[fileName.substringAfterLast('.', "").lowercase()]
+
     private fun guessMimeType(uri: Uri): String =
-        MIME_BY_EXTENSION[uri.lastPathSegment.orEmpty().substringAfterLast('.', "").lowercase()]
-            ?: "image/jpeg"
+        mimeForFileName(uri.lastPathSegment.orEmpty()) ?: "image/jpeg"
 }

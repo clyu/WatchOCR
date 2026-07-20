@@ -211,7 +211,7 @@ class DirectoryMonitorService : Service() {
             // Called on FileObserver's own thread: filter cheaply, hand off.
             override fun onEvent(event: Int, path: String?) {
                 if (path == null || path.startsWith(".")) return // .pending-*, .trashed-*
-                if (path.substringAfterLast('.', "").lowercase() !in OcrProcessor.MIME_BY_EXTENSION.keys) return
+                if (OcrProcessor.mimeForFileName(path) == null) return
                 newFiles.trySend(File(dirPath, path))
             }
         }.also { it.startWatching() }
