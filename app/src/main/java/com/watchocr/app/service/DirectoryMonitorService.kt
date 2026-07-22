@@ -237,15 +237,16 @@ class DirectoryMonitorService : Service() {
     }
 
     /**
-     * 4xx responses other than 429 are permanent (invalid API key: 400/403,
-     * unprocessable image: 400) — retrying them is pointless. So is a file
-     * deleted/renamed after its event (FileNotFoundException): it won't
+     * 4xx responses are permanent (invalid API key: 400/403, unprocessable
+     * image: 400) — retrying them is pointless — except 408 (request timeout)
+     * and 429 (rate limited), which are transient like the 5xx range. So is a
+     * file deleted/renamed after its event (FileNotFoundException): it won't
      * reappear, and if it does it fires a new event.
      */
     private fun isRetryable(e: Throwable?): Boolean = when (e) {
         is FileNotFoundException -> false
         is IOException -> true
-        is ApiHttpException -> e.code == 429 || e.code in 500..599
+        is ApiHttpException -> e.code == 408 || e.code == 429 || e.code in 500..599
         else -> false
     }
 
