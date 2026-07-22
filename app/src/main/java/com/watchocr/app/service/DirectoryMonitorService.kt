@@ -184,7 +184,9 @@ class DirectoryMonitorService : Service() {
                 Log.i(TAG, "processing ${file.name}")
                 updateNotification("Processing ${file.name}…")
 
-                processWithRetry(file, current.apiKey, current.model).onSuccess {
+                OcrProcessor.withActiveJob {
+                    processWithRetry(file, current.apiKey, current.model)
+                }.onSuccess {
                     Log.i(TAG, "processed ${file.name}")
                     lastErrorText = null
                     // Dedup successes only: writers that create the file empty
@@ -218,6 +220,8 @@ class DirectoryMonitorService : Service() {
         }.also { it.startWatching() }
     }
 
+    // Wrapped in OcrProcessor.withActiveJob by the caller so the whole retry
+    // cycle counts as one in-flight job.
     private suspend fun processWithRetry(file: File, apiKey: String, model: String): Result<OcrRecord> {
         val uri = Uri.fromFile(file)
         var attempt = 1

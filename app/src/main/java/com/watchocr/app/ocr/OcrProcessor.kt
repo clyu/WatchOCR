@@ -63,9 +63,26 @@ object OcrProcessor {
     val activeJobs: StateFlow<Int> = _activeJobs.asStateFlow()
 
     /**
+     * Counts [block] as one in-flight job for the whole time it runs. The
+     * monitor wraps its entire retry cycle in this, so [activeJobs] stays above
+     * zero across the backoff delay between attempts instead of dropping to 0
+     * and blinking the UI's progress indicator off mid-retry.
+     */
+    suspend fun <T> withActiveJob(block: suspend () -> T): T {
+        _activeJobs.update { it + 1 }
+        try {
+            return block()
+        } finally {
+            _activeJobs.update { it - 1 }
+        }
+    }
+
+    /**
      * Reads the image at [uri], downscales it if oversized, runs it through
      * Gemini for OCR + translation, copies the (possibly downscaled) image
-     * into app-private storage, and persists an [OcrRecord].
+     * into app-private storage, and persists an [OcrRecord]. Callers wrap this
+     * in [withActiveJob] to drive the UI's progress indicator; a single
+     * processImage does not count itself, so the monitor's retries stay one job.
      */
     suspend fun processImage(
         context: Context,
@@ -73,7 +90,6 @@ object OcrProcessor {
         apiKey: String,
         model: String
     ): Result<OcrRecord> = withContext(Dispatchers.IO) {
-        _activeJobs.update { it + 1 }
         try {
             val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
                 ?: return@withContext Result.failure(Exception("Unable to open image: $uri"))
@@ -116,8 +132,6 @@ object OcrProcessor {
             throw e // cancellation must propagate, not surface as a failed OCR
         } catch (e: Exception) {
             Result.failure(e)
-        } finally {
-            _activeJobs.update { it - 1 }
         }
     }
 

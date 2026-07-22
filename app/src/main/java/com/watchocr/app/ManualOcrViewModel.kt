@@ -34,7 +34,9 @@ class ManualOcrViewModel(application: Application) : AndroidViewModel(applicatio
         }
         isProcessing = true
         viewModelScope.launch {
-            val result = OcrProcessor.processImage(getApplication(), uri, apiKey, model)
+            val result = OcrProcessor.withActiveJob {
+                OcrProcessor.processImage(getApplication(), uri, apiKey, model)
+            }
             isProcessing = false
             result.onFailure { _messages.send("OCR failed: ${OcrProcessor.describeFailure(it)}") }
         }
