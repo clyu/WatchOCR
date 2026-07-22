@@ -11,7 +11,7 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "watchocr_settings")
 
-private const val DEFAULT_MODEL = "gemini-3.1-flash-lite"
+private const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
 
 data class AppSettings(
     /** MediaStore bucket (folder) to watch, or null if none selected. */
