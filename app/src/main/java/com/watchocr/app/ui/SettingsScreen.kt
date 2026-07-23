@@ -82,9 +82,12 @@ private val mediaImagesRequest: Array<String>
         arrayOf(mediaImagesPermission)
     }
 
+/** Shown for "keep forever" (0) and for any persisted value outside the offered choices. */
+private const val RETENTION_NEVER_LABEL = "Never"
+
 /** Auto-delete choices: days to keep OCR results -> menu label, 0 = keep forever. */
 private val retentionLabels = mapOf(
-    0 to "Never",
+    0 to RETENTION_NEVER_LABEL,
     1 to "After 1 day",
     7 to "After 7 days",
     30 to "After 30 days"
@@ -204,7 +207,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             OutlinedTextField(
                 // Any persisted value outside the offered choices reads as "Never",
                 // matching how HistoryCleanup treats anything <= 0.
-                value = retentionLabels[settings.retentionDays] ?: retentionLabels.getValue(0),
+                value = retentionLabels[settings.retentionDays] ?: RETENTION_NEVER_LABEL,
                 onValueChange = {},
                 readOnly = true,
                 singleLine = true,
