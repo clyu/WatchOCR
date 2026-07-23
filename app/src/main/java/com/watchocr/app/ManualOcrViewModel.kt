@@ -34,10 +34,15 @@ class ManualOcrViewModel(application: Application) : AndroidViewModel(applicatio
         }
         isProcessing = true
         viewModelScope.launch {
-            val result = OcrProcessor.withActiveJob {
-                OcrProcessor.processImage(getApplication(), uri, apiKey, model)
+            // finally, so a cancellation propagating out of processImage cannot
+            // leave the flag stuck at true and reject every later import.
+            val result = try {
+                OcrProcessor.withActiveJob {
+                    OcrProcessor.processImage(getApplication(), uri, apiKey, model)
+                }
+            } finally {
+                isProcessing = false
             }
-            isProcessing = false
             result.onFailure { _messages.send("OCR failed: ${OcrProcessor.describeFailure(it)}") }
         }
     }
