@@ -177,11 +177,10 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     ) { padding ->
         Row(modifier = Modifier.padding(padding).fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
-                when (selectedTab) {
-                    0 -> HistoryScreen()
-                    else -> settings?.let { SettingsScreen(settingsDataStore = settingsDataStore, settings = it) }
-                }
                 if (selectedTab == 0) {
+                    HistoryScreen()
+                    // After HistoryScreen so the Box draws the manual-import FAB
+                    // over it; it belongs to the History tab alone.
                     FloatingActionButton(
                         onClick = { pickImageLauncher.launch(arrayOf("image/*")) },
                         modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
@@ -195,6 +194,8 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
                             Icon(Icons.Default.Add, contentDescription = "Add image")
                         }
                     }
+                } else {
+                    settings?.let { SettingsScreen(settingsDataStore = settingsDataStore, settings = it) }
                 }
             }
             if (isLandscape) {
