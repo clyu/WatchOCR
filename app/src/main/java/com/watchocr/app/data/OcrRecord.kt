@@ -8,6 +8,16 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
+ * Value of [name] as a string, or null when the key is missing, explicitly
+ * null, or empty. Not `optString`: that funnels through `JSONObject.NULL`'s
+ * `toString()`, so an explicit `"key": null` comes back as the four-character
+ * string "null" rather than the fallback — which then reads as real content
+ * everywhere downstream.
+ */
+internal fun JSONObject.optStringOrNull(name: String): String? =
+    if (isNull(name)) null else optString(name).takeIf { it.isNotEmpty() }
+
+/**
  * One explained idiom/slang expression. [furigana] is only present when
  * [expression] contains kanji. [expression] is empty for records saved
  * before analysis items were structured; only [explanation] is set then.
@@ -29,9 +39,9 @@ data class AnalysisItem(
          * by the Gemini response schema and the Room analysis column.
          */
         fun fromJson(json: JSONObject): AnalysisItem = AnalysisItem(
-            expression = json.optString("expression"),
-            furigana = json.optString("furigana").takeIf { it.isNotEmpty() },
-            explanation = json.optString("explanation")
+            expression = json.optStringOrNull("expression").orEmpty(),
+            furigana = json.optStringOrNull("furigana"),
+            explanation = json.optStringOrNull("explanation").orEmpty()
         )
     }
 }

@@ -1,6 +1,7 @@
 package com.watchocr.app.network
 
 import com.watchocr.app.data.AnalysisItem
+import com.watchocr.app.data.optStringOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -142,14 +143,14 @@ object GeminiClient {
         val root = JSONObject(body)
         val candidates = root.optJSONArray("candidates")
         if (candidates == null || candidates.length() == 0) {
-            val blockReason = root.optJSONObject("promptFeedback")?.optString("blockReason").orEmpty()
+            val blockReason = root.optJSONObject("promptFeedback")?.optStringOrNull("blockReason").orEmpty()
             throw Exception(
                 if (blockReason.isNotEmpty()) "Request was blocked by the API (reason: $blockReason)."
                 else "API response contained no candidates."
             )
         }
         val candidate = candidates.getJSONObject(0)
-        val finishReason = candidate.optString("finishReason")
+        val finishReason = candidate.optStringOrNull("finishReason").orEmpty()
         val parts = candidate.optJSONObject("content")?.optJSONArray("parts")
             ?: throw Exception(noTextMessage(finishReason))
 
@@ -181,8 +182,8 @@ object GeminiClient {
             .orEmpty()
 
         return GeminiOcrResult(
-            ocr = resultJson.optString("ocr"),
-            translation = resultJson.optString("translation"),
+            ocr = resultJson.optStringOrNull("ocr").orEmpty(),
+            translation = resultJson.optStringOrNull("translation").orEmpty(),
             analysis = analysis
         )
     }
@@ -197,10 +198,10 @@ object GeminiClient {
     /** Pulls the human-readable `error.message` out of an API error body, if present. */
     private fun extractApiError(body: String): String {
         val message = try {
-            JSONObject(body).optJSONObject("error")?.optString("message")
+            JSONObject(body).optJSONObject("error")?.optStringOrNull("message")
         } catch (e: Exception) {
             null
         }
-        return message.takeUnless { it.isNullOrBlank() } ?: body.take(MAX_ERROR_DETAIL_CHARS)
+        return message?.takeIf { it.isNotBlank() } ?: body.take(MAX_ERROR_DETAIL_CHARS)
     }
 }
