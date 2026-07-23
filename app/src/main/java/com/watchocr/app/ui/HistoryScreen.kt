@@ -55,23 +55,13 @@ fun HistoryScreen() {
     // collectAsStateWithLifecycle keys on it, and a fresh Flow per
     // recomposition would restart the Room query every time.
     val recordsFlow = remember { AppDatabase.getInstance(context).ocrRecordDao().getAll() }
-    // null until Room's first emission; rendering nothing for that moment
-    // (instead of the empty-state text) keeps "No OCR history yet" from
-    // flashing on every open when history actually exists.
-    val records = recordsFlow.collectAsStateWithLifecycle(initialValue = null).value ?: return
+    // null until Room's first emission, then the records, newest first.
+    val records = recordsFlow.collectAsStateWithLifecycle(initialValue = null).value
     val clipboardManager = LocalClipboardManager.current
 
-    if (records.isEmpty()) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(
-                "No OCR history yet.\nTap + to pick an image, or set a watched folder in Settings.",
-                modifier = Modifier.padding(32.dp),
-                textAlign = TextAlign.Center
-            )
-        }
-        return
-    }
-
+    // Hoisted above the branching below so the set of remembered slots does not
+    // depend on which state the screen is in: an empty (or not-yet-loaded)
+    // history must not silently discard the scroll position and reset it.
     val listState = rememberLazyListState()
     // Saveable so a configuration change (screen rotation) restores it along
     // with listState's scroll position: the top id is then unchanged, no
@@ -82,8 +72,8 @@ fun HistoryScreen() {
     // one (e.g. the background monitor added a result while the app was in
     // another app or backgrounded), jump the list back to the top so it's visible.
     LaunchedEffect(records) {
-        val newTopId = records.firstOrNull()?.id
-        if (newTopId != null && newTopId != lastTopId) {
+        val newTopId = records?.firstOrNull()?.id ?: return@LaunchedEffect
+        if (newTopId != lastTopId) {
             val isFirstLoad = lastTopId == null
             // Updated before scrolling: a user touch cancels the scroll
             // animation (and this effect), and the record must not count as
@@ -97,20 +87,35 @@ fun HistoryScreen() {
         }
     }
 
-    LazyColumn(
-        state = listState,
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier.fillMaxSize()
-    ) {
-        items(records, key = { it.id }) { record ->
-            OcrRecordCard(
-                record = record,
-                onCopyOcrText = {
-                    clipboardManager.setText(AnnotatedString(record.ocrText))
-                    Toast.makeText(context, "Original text copied", Toast.LENGTH_SHORT).show()
-                }
+    when {
+        // Rendering nothing until the first emission (instead of the empty-state
+        // text) keeps "No OCR history yet" from flashing on every open when
+        // history actually exists.
+        records == null -> Unit
+
+        records.isEmpty() -> Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Text(
+                "No OCR history yet.\nTap + to pick an image, or set a watched folder in Settings.",
+                modifier = Modifier.padding(32.dp),
+                textAlign = TextAlign.Center
             )
+        }
+
+        else -> LazyColumn(
+            state = listState,
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            items(records, key = { it.id }) { record ->
+                OcrRecordCard(
+                    record = record,
+                    onCopyOcrText = {
+                        clipboardManager.setText(AnnotatedString(record.ocrText))
+                        Toast.makeText(context, "Original text copied", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
         }
     }
 }
