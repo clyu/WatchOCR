@@ -65,7 +65,11 @@ class DirectoryMonitorService : Service() {
     /** Files reported by [fileObserver]; UNLIMITED so bursts are not dropped. */
     private val newFiles = Channel<File>(Channel.UNLIMITED)
 
-    /** Last processing error, kept visible in the idle notification until a file succeeds. */
+    /**
+     * Last processing error, kept visible in the idle notification until a file
+     * succeeds or [reconcileMonitor] switches to a different folder. Outlives
+     * the [monitorLoop] that set it, so it must be cleared on that switch.
+     */
     private var lastErrorText: String? = null
 
     override fun onCreate() {
@@ -140,6 +144,10 @@ class DirectoryMonitorService : Service() {
         // started, so everything still queued is from the previous folder —
         // drop it rather than process it under the new folder.
         while (newFiles.tryReceive().isSuccess) { /* discard */ }
+        // Same reason: the message names a file in the folder being left
+        // behind, and monitorLoop opens with it — so without this the new
+        // folder's first notification would report the old folder's failure.
+        lastErrorText = null
         watchingDirPath = dirPath
         monitorJob = serviceScope.launch { monitorLoop(dirPath, settings.bucketName) }
     }
