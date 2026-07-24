@@ -339,5 +339,16 @@ class DirectoryMonitorService : Service() {
         fun start(context: Context) {
             ContextCompat.startForegroundService(context, Intent(context, DirectoryMonitorService::class.java))
         }
+
+        /**
+         * Counterpart to [start] for when monitoring is no longer possible
+         * (see [com.watchocr.app.data.AppSettings.canMonitor]). Without it the
+         * service would keep its "Watching…" notification up until the next
+         * image arrived and [monitorLoop] noticed the missing key. A no-op when
+         * the service is not running.
+         */
+        fun stop(context: Context) {
+            context.stopService(Intent(context, DirectoryMonitorService::class.java))
+        }
     }
 }

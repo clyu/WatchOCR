@@ -142,8 +142,18 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     // keystroke. bucketId stays a key so switching folders restarts the loop.
     val canMonitor = settings?.canMonitor == true
     LaunchedEffect(settings?.bucketId, canMonitor) {
+        // Skipped until DataStore's first emission: canMonitor reads false
+        // while settings is still null, and stopping on that would take down a
+        // monitor that is already running (this effect runs again from scratch
+        // after every configuration change).
+        if (settings == null) return@LaunchedEffect
         if (canMonitor) {
             DirectoryMonitorService.start(context)
+        } else {
+            // The service stops itself once it notices, but only when it next
+            // reconciles or picks up a file — clearing the API key would
+            // otherwise leave its "Watching…" notification up indefinitely.
+            DirectoryMonitorService.stop(context)
         }
     }
 
