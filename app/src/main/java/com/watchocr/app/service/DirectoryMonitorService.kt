@@ -72,6 +72,14 @@ class DirectoryMonitorService : Service() {
      */
     private var lastErrorText: String? = null
 
+    /**
+     * Id of the most recently delivered start command, for the one stop that
+     * cannot name its own ([monitorLoop]'s, which outlives the start that
+     * launched it). Written on the main thread, read from [serviceScope].
+     */
+    @Volatile
+    private var latestStartId: Int = 0
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
@@ -84,11 +92,16 @@ class DirectoryMonitorService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        latestStartId = startId
         // start() is called liberally (every app open, configuration change,
         // watched-bucket change); reconcileMonitor restarts the loop only when
         // the watched directory actually changed, so a redundant start cannot
         // cancel (and lose) a file mid-processing.
-        serviceScope.launch { reconcileMonitor() }
+        //
+        // startId travels with the reconcile so its decision to stop can be
+        // vetoed: every start command produces exactly one reconcile, so a
+        // newer one always re-reads the settings this one is stopping over.
+        serviceScope.launch { reconcileMonitor(startId) }
         if (cleanupJob?.isActive != true) {
             cleanupJob = serviceScope.launch { cleanupLoop() }
         }
@@ -98,7 +111,9 @@ class DirectoryMonitorService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     // Deliberate: swiping the app away from recents is the user's way of
-    // stopping monitoring; opening the app again resumes it.
+    // stopping monitoring; opening the app again resumes it. Unconditional
+    // stopSelf() on purpose — unlike the settings-driven stops below, this is
+    // a direct user instruction that no pending start command should override.
     override fun onTaskRemoved(rootIntent: Intent?) {
         stopSelf()
         super.onTaskRemoved(rootIntent)
@@ -116,12 +131,16 @@ class DirectoryMonitorService : Service() {
      * leaving an already-running loop untouched when the directory is
      * unchanged. Joining the old loop before starting the new one keeps its
      * cleanup from stopping the new loop's observer.
+     *
+     * [startId] is the start command this reconcile answers; both stops below
+     * are scoped to it, so settings read here can never stop a service that a
+     * later start command has already been asked to reconsider.
      */
-    private suspend fun reconcileMonitor(): Unit = reconcileLock.withLock {
+    private suspend fun reconcileMonitor(startId: Int): Unit = reconcileLock.withLock {
         val settings = settingsDataStore.settingsFlow.first()
 
         if (!settings.canMonitor) {
-            stopSelf()
+            stopSelf(startId)
             return
         }
         // canMonitor guarantees a bucketId.
@@ -133,7 +152,7 @@ class DirectoryMonitorService : Service() {
             ?: MediaStoreImages.queryBucketPath(applicationContext, bucketId)
                 ?.also { settingsDataStore.setWatchedDirPath(it) }
         if (dirPath == null || !File(dirPath).isDirectory) {
-            stopWithAlert("Watched folder unavailable — re-select it in Settings.")
+            stopWithAlert("Watched folder unavailable — re-select it in Settings.", startId)
             return
         }
 
@@ -186,7 +205,13 @@ class DirectoryMonitorService : Service() {
                     // stop instead of burning retries; MainActivity restarts
                     // the service once a key is set again.
                     Log.w(TAG, "API key cleared, stopping monitor")
-                    stopWithAlert("Gemini API key is not set — monitoring stopped. Set it in Settings to resume.")
+                    // latestStartId, not the one that launched this loop: that
+                    // one is long superseded (every app open starts the service
+                    // again), so stopping against it would never take effect.
+                    stopWithAlert(
+                        "Gemini API key is not set — monitoring stopped. Set it in Settings to resume.",
+                        latestStartId
+                    )
                     return
                 }
                 Log.i(TAG, "processing ${file.name}")
@@ -313,11 +338,16 @@ class DirectoryMonitorService : Service() {
      * that outlives it. Not updateNotification: stopSelf() takes the
      * foreground notification down with the service, so a message the user
      * has to act on must go out as a standalone one.
+     *
+     * [startId] scopes the stop to the start command that prompted it: if a
+     * newer one has since been delivered, the system ignores this and lets that
+     * one's [reconcileMonitor] decide. The alert stands either way — it is
+     * dismissible, and the condition it reports was real when it was posted.
      */
-    private fun stopWithAlert(text: String) {
+    private fun stopWithAlert(text: String, startId: Int) {
         getSystemService(NotificationManager::class.java)
             .notify(ALERT_NOTIFICATION_ID, buildNotification(text, ongoing = false, channelId = ALERT_CHANNEL_ID))
-        stopSelf()
+        stopSelf(startId)
     }
 
     companion object {
