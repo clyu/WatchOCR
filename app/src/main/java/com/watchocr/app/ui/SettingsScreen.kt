@@ -93,6 +93,26 @@ private val retentionLabels = mapOf(
     30 to "After 30 days"
 )
 
+/**
+ * One titled block of the settings list. Emits its children straight into the
+ * caller's [Column] instead of nesting a layout of its own, so the screen's
+ * `spacedBy(16.dp)` keeps applying between the title and every element of
+ * [content] exactly as it did when these were written out inline.
+ *
+ * The separator belongs to the section that follows it, so only the first
+ * section opts out of one.
+ */
+@Composable
+private fun SettingsSection(
+    title: String,
+    dividerAbove: Boolean = true,
+    content: @Composable () -> Unit
+) {
+    if (dividerAbove) HorizontalDivider()
+    Text(title, style = MaterialTheme.typography.titleMedium)
+    content()
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) {
@@ -122,6 +142,12 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
         }
     }
 
+    // Most messages here explain a permission or path problem the user has to
+    // read and act on, so LENGTH_LONG is the default.
+    fun toast(message: String, duration: Int = Toast.LENGTH_LONG) {
+        Toast.makeText(context, message, duration).show()
+    }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
@@ -129,12 +155,10 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             results[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true
         when {
             results[mediaImagesPermission] == true -> openFolderPicker()
-            partialAccess -> Toast.makeText(
-                context,
-                "Watching a folder needs access to all photos — tap Choose Folder again and allow access to all photos.",
-                Toast.LENGTH_LONG
-            ).show()
-            else -> Toast.makeText(context, "Photo access is required to choose a folder.", Toast.LENGTH_LONG).show()
+            partialAccess -> toast(
+                "Watching a folder needs access to all photos — tap Choose Folder again and allow access to all photos."
+            )
+            else -> toast("Photo access is required to choose a folder.")
         }
     }
 
@@ -145,97 +169,95 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Text("Monitored Folder", style = MaterialTheme.typography.titleMedium)
-        Text(settings.bucketName ?: "No folder selected", style = MaterialTheme.typography.bodyMedium)
-        Button(onClick = {
-            if (ContextCompat.checkSelfPermission(context, mediaImagesPermission) == PackageManager.PERMISSION_GRANTED) {
-                openFolderPicker()
-            } else {
-                permissionLauncher.launch(mediaImagesRequest)
+        SettingsSection("Monitored Folder", dividerAbove = false) {
+            Text(settings.bucketName ?: "No folder selected", style = MaterialTheme.typography.bodyMedium)
+            Button(onClick = {
+                val hasFullAccess = ContextCompat.checkSelfPermission(context, mediaImagesPermission) ==
+                    PackageManager.PERMISSION_GRANTED
+                if (hasFullAccess) openFolderPicker() else permissionLauncher.launch(mediaImagesRequest)
+            }) {
+                Text("Choose Folder")
             }
-        }) {
-            Text("Choose Folder")
         }
 
-        HorizontalDivider()
-
-        Text("Gemini API Key", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = apiKey,
-            onValueChange = {
-                apiKey = it
-                scope.launch { settingsDataStore.setApiKey(it) }
-            },
-            label = { Text("API Key") },
-            singleLine = true,
-            // Password keyboard: keeps the IME from learning the key and
-            // offering it back as a suggestion in other apps.
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            visualTransformation = if (apiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-            trailingIcon = {
-                IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
-                    Icon(
-                        imageVector = if (apiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = null
-                    )
-                }
-            },
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        HorizontalDivider()
-
-        Text("Gemini Model (OCR)", style = MaterialTheme.typography.titleMedium)
-        OutlinedTextField(
-            value = model,
-            onValueChange = {
-                model = it
-                scope.launch { settingsDataStore.setModel(it) }
-            },
-            label = { Text("Model") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-
-        HorizontalDivider()
-
-        Text("Auto-delete History", style = MaterialTheme.typography.titleMedium)
-        ExposedDropdownMenuBox(
-            expanded = retentionMenuExpanded,
-            onExpandedChange = { retentionMenuExpanded = it }
-        ) {
+        SettingsSection("Gemini API Key") {
             OutlinedTextField(
-                // Any persisted value outside the offered choices reads as "Never",
-                // matching how HistoryCleanup treats anything <= 0.
-                value = retentionLabels[settings.retentionDays] ?: RETENTION_NEVER_LABEL,
-                onValueChange = {},
-                readOnly = true,
+                value = apiKey,
+                onValueChange = {
+                    apiKey = it
+                    scope.launch { settingsDataStore.setApiKey(it) }
+                },
+                label = { Text("API Key") },
                 singleLine = true,
-                label = { Text("Delete results") },
-                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = retentionMenuExpanded) },
-                modifier = Modifier
-                    .menuAnchor(MenuAnchorType.PrimaryNotEditable)
-                    .fillMaxWidth()
+                // Password keyboard: keeps the IME from learning the key and
+                // offering it back as a suggestion in other apps.
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                visualTransformation =
+                    if (apiKeyVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                trailingIcon = {
+                    IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                        Icon(
+                            imageVector =
+                                if (apiKeyVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = null
+                        )
+                    }
+                },
+                modifier = Modifier.fillMaxWidth()
             )
-            ExposedDropdownMenu(
+        }
+
+        SettingsSection("Gemini Model (OCR)") {
+            OutlinedTextField(
+                value = model,
+                onValueChange = {
+                    model = it
+                    scope.launch { settingsDataStore.setModel(it) }
+                },
+                label = { Text("Model") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        SettingsSection("Auto-delete History") {
+            ExposedDropdownMenuBox(
                 expanded = retentionMenuExpanded,
-                onDismissRequest = { retentionMenuExpanded = false }
+                onExpandedChange = { retentionMenuExpanded = it }
             ) {
-                retentionLabels.forEach { (days, label) ->
-                    DropdownMenuItem(
-                        text = { Text(label) },
-                        onClick = {
-                            retentionMenuExpanded = false
-                            // MainActivity's LaunchedEffect(settings.retentionDays)
-                            // runs the cleanup once this write lands.
-                            scope.launch { settingsDataStore.setRetentionDays(days) }
-                        }
-                    )
+                OutlinedTextField(
+                    // Any persisted value outside the offered choices reads as "Never",
+                    // matching how HistoryCleanup treats anything <= 0.
+                    value = retentionLabels[settings.retentionDays] ?: RETENTION_NEVER_LABEL,
+                    onValueChange = {},
+                    readOnly = true,
+                    singleLine = true,
+                    label = { Text("Delete results") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = retentionMenuExpanded) },
+                    modifier = Modifier
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                        .fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = retentionMenuExpanded,
+                    onDismissRequest = { retentionMenuExpanded = false }
+                ) {
+                    retentionLabels.forEach { (days, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                retentionMenuExpanded = false
+                                // MainActivity's LaunchedEffect(settings.retentionDays)
+                                // runs the cleanup once this write lands.
+                                scope.launch { settingsDataStore.setRetentionDays(days) }
+                            }
+                        )
+                    }
                 }
             }
-        }
-        Button(onClick = { showClearConfirm = true }) {
-            Text("Clear History Now")
+            Button(onClick = { showClearConfirm = true }) {
+                Text("Clear History Now")
+            }
         }
     }
 
@@ -249,7 +271,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                     showClearConfirm = false
                     scope.launch {
                         HistoryCleanup.clearAll(context)
-                        Toast.makeText(context, "History cleared", Toast.LENGTH_SHORT).show()
+                        toast("History cleared", Toast.LENGTH_SHORT)
                     }
                 }) { Text("Clear") }
             },
@@ -280,11 +302,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                                                 MediaStoreImages.queryBucketPath(context, bucket.id)
                                             }
                                             if (dirPath == null) {
-                                                Toast.makeText(
-                                                    context,
-                                                    "Couldn't determine this folder's path; choose another folder.",
-                                                    Toast.LENGTH_LONG
-                                                ).show()
+                                                toast("Couldn't determine this folder's path; choose another folder.")
                                             } else {
                                                 settingsDataStore.setWatchedBucket(bucket.id, bucket.name, dirPath)
                                                 // Revives a self-stopped service even when the
