@@ -50,7 +50,21 @@ object OcrProcessor {
 
     /** Images above these limits are downscaled/re-encoded before upload. */
     private const val MAX_DIMENSION = 1536
-    private const val MAX_UPLOAD_BYTES = 4 * 1024 * 1024
+
+    /**
+     * Deliberately far below the API's inline-data limit: the request asks for
+     * MEDIA_RESOLUTION_LOW (280 tokens), so the server downsamples hard no
+     * matter what arrives, and bytes beyond roughly what a [MAX_DIMENSION]
+     * JPEG costs buy nothing while being paid for in upload time, memory and
+     * battery. Re-encoding a lossless PNG screenshot does cost some sharpness
+     * around text, but the server's own downsampling averages those artifacts
+     * out well before the model sees them.
+     *
+     * Tied to the resolution setting, so raising mediaResolution in
+     * [com.watchocr.app.network.GeminiClient] means revisiting this.
+     */
+    private const val MAX_UPLOAD_BYTES = 1024 * 1024
+
     private const val JPEG_QUALITY = 85
 
     private val _activeJobs = MutableStateFlow(0)
@@ -155,7 +169,7 @@ object OcrProcessor {
      * bound peak memory) or in a format the API rejects (BMP/GIF/AVIF). The
      * request uses MEDIA_RESOLUTION_LOW, so the extra resolution would be
      * discarded server-side anyway; downscaling just avoids OOM on huge photos
-     * and stays under the API's inline-data size limit.
+     * and keeps the upload to something worth sending (see [MAX_UPLOAD_BYTES]).
      */
     private fun prepareForUpload(bytes: ByteArray, mimeType: String): Pair<ByteArray, String> {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
