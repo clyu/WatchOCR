@@ -118,9 +118,12 @@ object OcrProcessor {
 
             val id = try {
                 AppDatabase.getInstance(context).ocrRecordDao().insert(record)
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
                 // The record never made it into the database, so nothing would
-                // ever clean up the image copy — remove it here.
+                // ever clean up the image copy — remove it here. Throwable, not
+                // Exception: HistoryCleanup only deletes files a row points at,
+                // so a file orphaned by an OutOfMemoryError (or by cancellation)
+                // would sit in app storage forever.
                 imageFile.delete()
                 throw e
             }
@@ -131,6 +134,17 @@ object OcrProcessor {
         } catch (e: CancellationException) {
             throw e // cancellation must propagate, not surface as a failed OCR
         } catch (e: Exception) {
+            Result.failure(e)
+        } catch (e: OutOfMemoryError) {
+            // Catching an Error is normally wrong, but this one is expected
+            // here and recoverable: decoding, re-encoding and base64-ing an
+            // image are the allocations this app can realistically fail, and a
+            // failed allocation leaves nothing half-written — the bitmap and
+            // buffers are simply released. Left uncaught it escapes the Result
+            // contract entirely and kills the process, taking the monitor with
+            // it; as a failure it is just one skipped image. Not retried:
+            // isRetryable() has no case for it, and an immediate second attempt
+            // would allocate exactly as much again.
             Result.failure(e)
         }
     }

@@ -22,6 +22,8 @@ import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.network.ApiHttpException
 import com.watchocr.app.ocr.OcrProcessor
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,7 +52,11 @@ import java.io.IOException
  */
 class DirectoryMonitorService : Service() {
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    // The handler is built inline rather than held in a property: a property
+    // declared after this one would still be null when this initializer runs.
+    private val serviceScope = CoroutineScope(
+        SupervisorJob() + Dispatchers.IO + CoroutineExceptionHandler { _, e -> onCoroutineFailure(e) }
+    )
     private val settingsDataStore by lazy { SettingsDataStore(applicationContext) }
     private var monitorJob: Job? = null
     private var cleanupJob: Job? = null
@@ -327,7 +333,20 @@ class DirectoryMonitorService : Service() {
      */
     private suspend fun cleanupLoop() {
         while (currentCoroutineContext().isActive) {
-            HistoryCleanup.deleteOlderThan(applicationContext, settingsDataStore.settingsFlow.first().retentionDays)
+            // Caught here rather than left to [onCoroutineFailure]: retention
+            // is best-effort housekeeping, so a failed sweep (database locked,
+            // unreadable file) must not escalate into stopping monitoring. The
+            // next hourly pass tries again.
+            try {
+                HistoryCleanup.deleteOlderThan(
+                    applicationContext,
+                    settingsDataStore.settingsFlow.first().retentionDays
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "history cleanup failed", e)
+            }
             delay(CLEANUP_INTERVAL_MS)
         }
     }
@@ -391,6 +410,30 @@ class DirectoryMonitorService : Service() {
     private fun stopWithAlert(text: String, startId: Int) {
         notificationManager.notify(ALERT_NOTIFICATION_ID, buildNotification(text, alert = true))
         stopSelf(startId)
+    }
+
+    /**
+     * Last line of defence for [serviceScope]'s children. SupervisorJob keeps
+     * one child's failure from cancelling its siblings but does not swallow it:
+     * with no handler installed it reaches the thread's default handler and
+     * takes the process down. [reconcileMonitor] and [monitorLoop] both go
+     * through DataStore, MediaStore and the notification manager outside any
+     * try/catch, none of which are guaranteed not to throw.
+     *
+     * Stopping is the honest response rather than logging and carrying on:
+     * whatever failed, nothing is watching the folder any more, and the
+     * "Watching…" notification would keep claiming otherwise. Cancellation is
+     * never delivered to a handler, so an ordinary shutdown or a folder switch
+     * cannot trip this.
+     */
+    private fun onCoroutineFailure(e: Throwable) {
+        Log.e(TAG, "monitor coroutine failed", e)
+        // latestStartId for the same reason monitorLoop's stop uses it: the
+        // coroutine that failed may long outlive the start that launched it.
+        stopWithAlert(
+            "Monitoring stopped unexpectedly (${OcrProcessor.describeFailure(e)}). Reopen WatchOCR to resume.",
+            latestStartId
+        )
     }
 
     companion object {
