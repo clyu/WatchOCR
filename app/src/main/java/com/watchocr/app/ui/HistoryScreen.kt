@@ -72,7 +72,18 @@ fun HistoryScreen() {
     // one (e.g. the background monitor added a result while the app was in
     // another app or backgrounded), jump the list back to the top so it's visible.
     LaunchedEffect(records) {
-        val newTopId = records?.firstOrNull()?.id ?: return@LaunchedEffect
+        if (records == null) return@LaunchedEffect // nothing loaded yet
+        val newTopId = records.firstOrNull()?.id
+        if (newTopId == null) {
+            // History is now empty (cleared from Settings, or aged out by the
+            // retention sweep), and the remembered id has to go with it: the
+            // primary key is autoGenerate without AUTOINCREMENT, so SQLite
+            // reuses rowids after a delete. The next record can therefore
+            // arrive carrying the very id still sitting here, which would read
+            // as "same top as before" and skip the scroll.
+            lastTopId = null
+            return@LaunchedEffect
+        }
         if (newTopId != lastTopId) {
             val isFirstLoad = lastTopId == null
             // Updated before scrolling: a user touch cancels the scroll
