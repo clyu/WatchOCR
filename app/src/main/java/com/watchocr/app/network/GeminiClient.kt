@@ -154,8 +154,13 @@ object GeminiClient {
         val parts = candidate.optJSONObject("content")?.optJSONArray("parts")
             ?: throw Exception(noTextMessage(finishReason))
 
+        // optJSONObject, not getJSONObject: a part that is not an object at all
+        // is skipped like any other part without usable text, so the failure
+        // surfaces as noTextMessage() below rather than as a raw JSONException
+        // whose message ("Value … cannot be converted to JSONObject") would end
+        // up verbatim in a snackbar.
         val rawText = (0 until parts.length()).asSequence()
-            .map { parts.getJSONObject(it) }
+            .mapNotNull { parts.optJSONObject(it) }
             .firstOrNull { it.has("text") && !it.isNull("text") && !it.optBoolean("thought", false) }
             ?.getString("text")
 
@@ -195,13 +200,19 @@ object GeminiClient {
             "API returned no text."
         }
 
-    /** Pulls the human-readable `error.message` out of an API error body, if present. */
+    /**
+     * Pulls the human-readable `error.message` out of an API error body, falling
+     * back to the raw body and then — for the 5xx responses that carry no body
+     * at all — to a fixed phrase, so the caller's "HTTP 500: …" never trails
+     * off after the colon.
+     */
     private fun extractApiError(body: String): String {
         val message = try {
             JSONObject(body).optJSONObject("error")?.optStringOrNull("message")
         } catch (e: Exception) {
             null
         }
-        return message?.takeIf { it.isNotBlank() } ?: body.take(MAX_ERROR_DETAIL_CHARS)
+        return message?.takeIf { it.isNotBlank() }
+            ?: body.trim().take(MAX_ERROR_DETAIL_CHARS).ifBlank { "no details in the response body" }
     }
 }
