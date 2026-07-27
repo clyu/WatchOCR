@@ -2,6 +2,7 @@ package com.watchocr.app.service
 
 import android.app.Notification
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -14,6 +15,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.watchocr.app.MainActivity
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.OcrRecord
@@ -52,6 +54,34 @@ class DirectoryMonitorService : Service() {
     private val settingsDataStore by lazy { SettingsDataStore(applicationContext) }
     private var monitorJob: Job? = null
     private var cleanupJob: Job? = null
+
+    private val notificationManager by lazy { getSystemService(NotificationManager::class.java) }
+
+    /**
+     * Sent when either notification is tapped. Without it `setAutoCancel` is a
+     * no-op — it only fires on tap — and the alerts' "…in Settings"
+     * instructions are a dead end. Reopening MainActivity also re-runs its
+     * start-service effect, which is exactly the recovery the alerts ask for.
+     *
+     * Built once: [updateNotification] runs per processed file, and
+     * PendingIntent.getActivity round-trips to the system server.
+     */
+    private val contentIntent: PendingIntent by lazy {
+        PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java).setFlags(
+                // SINGLE_TOP is load-bearing: MainActivity's launchMode is
+                // `standard`, so CLEAR_TOP alone would destroy and recreate an
+                // already-open app, resetting the selected tab and scroll
+                // position instead of just bringing it forward.
+                Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP
+            ),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+    }
 
     /** Serializes [reconcileMonitor] so overlapping start() calls cannot race. */
     private val reconcileLock = Mutex()
@@ -155,6 +185,14 @@ class DirectoryMonitorService : Service() {
             stopWithAlert("Watched folder unavailable — re-select it in Settings.", startId)
             return
         }
+        // Monitoring is viable again, so an alert left behind by an earlier
+        // reconcile ("folder unavailable") or by monitorLoop ("API key is not
+        // set") no longer describes reality. Above the early return on purpose:
+        // a stop that was vetoed by a newer start command leaves the alert up
+        // with the loop still running, and that case must clear it too.
+        // Deliberately not in onDestroy — stopWithAlert posts and then stops,
+        // so cancelling there would erase the alert it just put up.
+        notificationManager.cancel(ALERT_NOTIFICATION_ID)
 
         if (monitorJob?.isActive == true && dirPath == watchingDirPath) return
 
@@ -295,8 +333,7 @@ class DirectoryMonitorService : Service() {
     }
 
     private fun createNotificationChannels() {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.createNotificationChannel(
+        notificationManager.createNotificationChannel(
             android.app.NotificationChannel(
                 MONITOR_CHANNEL_ID,
                 "Directory Monitor",
@@ -305,7 +342,7 @@ class DirectoryMonitorService : Service() {
         )
         // Alerts ask the user to act (monitoring stopped, folder gone), so they
         // must be audible/heads-up — unlike the silent ongoing status channel.
-        manager.createNotificationChannel(
+        notificationManager.createNotificationChannel(
             android.app.NotificationChannel(
                 ALERT_CHANNEL_ID,
                 "Monitoring Alerts",
@@ -314,23 +351,29 @@ class DirectoryMonitorService : Service() {
         )
     }
 
-    private fun buildNotification(
-        text: String,
-        ongoing: Boolean = true,
-        channelId: String = MONITOR_CHANNEL_ID
-    ): Notification {
-        return NotificationCompat.Builder(this, channelId)
+    /**
+     * [alert] selects the whole "the user has to act" presentation at once —
+     * audible channel, dismissible rather than ongoing, cleared on tap. The
+     * three always moved together, so they are one parameter.
+     */
+    private fun buildNotification(text: String, alert: Boolean = false): Notification {
+        return NotificationCompat.Builder(this, if (alert) ALERT_CHANNEL_ID else MONITOR_CHANNEL_ID)
             .setContentTitle("WatchOCR")
             .setContentText(text)
             .setStyle(NotificationCompat.BigTextStyle().bigText(text))
             .setSmallIcon(android.R.drawable.ic_menu_camera)
-            .setOngoing(ongoing)
-            .setAutoCancel(!ongoing)
+            .setContentIntent(contentIntent)
+            .setOngoing(!alert)
+            .setAutoCancel(alert)
+            // Re-posting an unchanged alert (every app open while the folder is
+            // still missing) must not make a sound again; one posted after the
+            // user dismissed the previous alert still does.
+            .setOnlyAlertOnce(alert)
             .build()
     }
 
     private fun updateNotification(text: String) {
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(text))
+        notificationManager.notify(NOTIFICATION_ID, buildNotification(text))
     }
 
     /**
@@ -342,11 +385,11 @@ class DirectoryMonitorService : Service() {
      * [startId] scopes the stop to the start command that prompted it: if a
      * newer one has since been delivered, the system ignores this and lets that
      * one's [reconcileMonitor] decide. The alert stands either way — it is
-     * dismissible, and the condition it reports was real when it was posted.
+     * dismissible, and the condition it reports was real when it was posted;
+     * a reconcile that finds monitoring viable again cancels it.
      */
     private fun stopWithAlert(text: String, startId: Int) {
-        getSystemService(NotificationManager::class.java)
-            .notify(ALERT_NOTIFICATION_ID, buildNotification(text, ongoing = false, channelId = ALERT_CHANNEL_ID))
+        notificationManager.notify(ALERT_NOTIFICATION_ID, buildNotification(text, alert = true))
         stopSelf(startId)
     }
 
