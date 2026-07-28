@@ -297,8 +297,9 @@ class DirectoryMonitorService : Service() {
         }.also { it.startWatching() }
     }
 
-    // Wrapped in OcrProcessor.withActiveJob by the caller so the whole retry
-    // cycle counts as one in-flight job.
+    // Wrapped in OcrProcessor.withActiveJob by the caller so the progress
+    // indicator stays on across the backoff delays between attempts, which
+    // processImage's own counting does not cover.
     private suspend fun processWithRetry(file: File, apiKey: String, model: String): Result<OcrRecord> {
         val uri = Uri.fromFile(file)
         var attempt = 1

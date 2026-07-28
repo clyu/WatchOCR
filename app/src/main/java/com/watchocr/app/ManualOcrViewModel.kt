@@ -37,9 +37,7 @@ class ManualOcrViewModel(application: Application) : AndroidViewModel(applicatio
             // finally, so a cancellation propagating out of processImage cannot
             // leave the flag stuck at true and reject every later import.
             val result = try {
-                OcrProcessor.withActiveJob {
-                    OcrProcessor.processImage(getApplication(), uri, apiKey, model)
-                }
+                OcrProcessor.processImage(getApplication(), uri, apiKey, model)
             } finally {
                 isProcessing = false
             }

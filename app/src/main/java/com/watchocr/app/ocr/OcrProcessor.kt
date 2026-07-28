@@ -70,17 +70,22 @@ object OcrProcessor {
     private val _activeJobs = MutableStateFlow(0)
 
     /**
-     * Number of OCR requests currently in flight, from either the manual
-     * import flow or [com.watchocr.app.service.DirectoryMonitorService].
-     * The UI shows a progress indicator while this is above zero.
+     * Non-zero while OCR work is in flight, from either the manual import flow
+     * or [com.watchocr.app.service.DirectoryMonitorService]. The UI shows a
+     * progress indicator while this is above zero.
+     *
+     * Only that comparison is meaningful: [processImage] counts itself and the
+     * monitor holds a second count open across its retry cycle, so the value is
+     * a nesting depth rather than a number of images.
      */
     val activeJobs: StateFlow<Int> = _activeJobs.asStateFlow()
 
     /**
-     * Counts [block] as one in-flight job for the whole time it runs. The
-     * monitor wraps its entire retry cycle in this, so [activeJobs] stays above
-     * zero across the backoff delay between attempts instead of dropping to 0
-     * and blinking the UI's progress indicator off mid-retry.
+     * Holds [activeJobs] above zero for the whole time [block] runs. Needed
+     * only on top of [processImage]'s own counting, and only by the monitor's
+     * retry cycle: without it the count would fall back to zero during the
+     * backoff delay between attempts and blink the progress indicator off
+     * mid-retry.
      */
     suspend fun <T> withActiveJob(block: suspend () -> T): T {
         _activeJobs.update { it + 1 }
@@ -94,11 +99,25 @@ object OcrProcessor {
     /**
      * Reads the image at [uri], downscales it if oversized, runs it through
      * Gemini for OCR + translation, copies the (possibly downscaled) image
-     * into app-private storage, and persists an [OcrRecord]. Callers wrap this
-     * in [withActiveJob] to drive the UI's progress indicator; a single
-     * processImage does not count itself, so the monitor's retries stay one job.
+     * into app-private storage, and persists an [OcrRecord].
+     *
+     * Counts itself in [activeJobs], so no caller has to remember to — the one
+     * thing every caller previously had to know about this object. The monitor
+     * nests a second, longer-lived count on top via [withActiveJob]; nothing
+     * reads the depth, only whether it is above zero.
      */
     suspend fun processImage(
+        context: Context,
+        uri: Uri,
+        apiKey: String,
+        model: String
+    ): Result<OcrRecord> = withActiveJob { processImageUncounted(context, uri, apiKey, model) }
+
+    /**
+     * Split out purely so [processImage] can wrap it: keeping the body here
+     * leaves it untouched by the counting concern.
+     */
+    private suspend fun processImageUncounted(
         context: Context,
         uri: Uri,
         apiKey: String,
