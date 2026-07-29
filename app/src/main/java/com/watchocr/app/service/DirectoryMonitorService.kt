@@ -189,13 +189,12 @@ class DirectoryMonitorService : Service() {
             stopSelf(startId)
             return
         }
-        // canMonitor guarantees a bucketId.
-        val bucketId = checkNotNull(settings.bucketId)
-
         // Installs upgraded from the MediaStore-based version have a bucketId
-        // but no persisted path — resolve it once and persist.
+        // (canMonitor guarantees one) but no persisted path — resolve it once
+        // and persist. Only that upgrade path needs the bucketId, so it is read
+        // here rather than above: every other reconcile already has the path.
         val dirPath = settings.watchedDirPath
-            ?: MediaStoreImages.queryBucketPath(applicationContext, bucketId)
+            ?: MediaStoreImages.queryBucketPath(applicationContext, checkNotNull(settings.bucketId))
                 ?.also { settingsDataStore.setWatchedDirPath(it) }
         if (dirPath == null || !File(dirPath).isDirectory) {
             stopWithAlert("Watched folder unavailable — re-select it in Settings.", startId)
