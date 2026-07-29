@@ -49,8 +49,19 @@ import java.io.IOException
  * MOVED_TO only after a rename of a fully written file (the MediaStore
  * IS_PENDING pattern publishes `.pending-*` files this way), so a reported
  * file is complete — no size polling or processed-file bookkeeping is needed.
+ * DELETE_SELF/MOVE_SELF report the watched directory itself disappearing;
+ * without them the inotify watch would die silently (even a recreated folder
+ * is a new inode the dead watch does not cover) while the "Watching…"
+ * notification kept claiming otherwise.
  */
 class DirectoryMonitorService : Service() {
+
+    /** What [fileObserver] reports: a newly written image, or the loss of the
+     * watched directory itself (deleted, renamed or unmounted). */
+    private sealed interface WatchEvent {
+        data class NewFile(val file: File) : WatchEvent
+        data object WatchedDirGone : WatchEvent
+    }
 
     // The handler is built inline rather than held in a property: a property
     // declared after this one would still be null when this initializer runs.
@@ -98,8 +109,8 @@ class DirectoryMonitorService : Service() {
     /** Strong reference: a GC'd FileObserver silently stops watching. */
     private var fileObserver: FileObserver? = null
 
-    /** Files reported by [fileObserver]; UNLIMITED so bursts are not dropped. */
-    private val newFiles = Channel<File>(Channel.UNLIMITED)
+    /** Events reported by [fileObserver]; UNLIMITED so bursts are not dropped. */
+    private val watchEvents = Channel<WatchEvent>(Channel.UNLIMITED)
 
     /**
      * Last processing error, kept visible in the idle notification until a file
@@ -193,7 +204,7 @@ class DirectoryMonitorService : Service() {
         }
         // Monitoring is viable again, so an alert left behind by an earlier
         // reconcile ("folder unavailable") or by monitorLoop ("API key is not
-        // set") no longer describes reality. Above the early return on purpose:
+        // set", "folder is no longer available") no longer describes reality. Above the early return on purpose:
         // a stop that was vetoed by a newer start command leaves the alert up
         // with the loop still running, and that case must clear it too.
         // Deliberately not in onDestroy — stopWithAlert posts and then stops,
@@ -206,7 +217,7 @@ class DirectoryMonitorService : Service() {
         // The old loop's observer is stopped by now and the new one not yet
         // started, so everything still queued is from the previous folder —
         // drop it rather than process it under the new folder.
-        while (newFiles.tryReceive().isSuccess) { /* discard */ }
+        while (watchEvents.tryReceive().isSuccess) { /* discard */ }
         // Same reason: the message names a file in the folder being left
         // behind, and monitorLoop opens with it — so without this the new
         // folder's first notification would report the old folder's failure.
@@ -228,7 +239,22 @@ class DirectoryMonitorService : Service() {
         try {
             startObserver(dirPath)
             updateNotification(lastErrorText ?: idleText)
-            for (file in newFiles) {
+            for (event in watchEvents) {
+                val file = when (event) {
+                    WatchEvent.WatchedDirGone -> {
+                        Log.w(TAG, "watched directory gone, stopping monitor")
+                        // latestStartId for the same reason as the API-key stop
+                        // below; reconcile clears this alert once the folder is
+                        // viable again (e.g. re-selected, or recreated by the
+                        // camera app and the user reopened WatchOCR).
+                        stopWithAlert(
+                            "Watched folder is no longer available — monitoring stopped. Re-select it in Settings.",
+                            latestStartId
+                        )
+                        return
+                    }
+                    is WatchEvent.NewFile -> event.file
+                }
                 val now = SystemClock.elapsedRealtime()
                 recentlyDone.entries.removeAll { now - it.value > DEDUP_WINDOW_MS }
                 if (recentlyDone.containsKey(file.path)) {
@@ -287,12 +313,26 @@ class DirectoryMonitorService : Service() {
         // No previous observer to stop: reconcileMonitor joins the old
         // monitorLoop before launching a new one, and that loop's finally
         // always stops and clears the observer it started.
-        fileObserver = object : FileObserver(dirPath, CLOSE_WRITE or MOVED_TO) {
+        fileObserver = object : FileObserver(
+            dirPath,
+            CLOSE_WRITE or MOVED_TO or DELETE_SELF or MOVE_SELF
+        ) {
             // Called on FileObserver's own thread: filter cheaply, hand off.
             override fun onEvent(event: Int, path: String?) {
+                // Checked by bit rather than left to mask filtering: the self
+                // events carry a null path, and the kernel also delivers
+                // unrequested null-path events (IN_IGNORED after the watch
+                // dies) that must not be mistaken for them. IN_UNMOUNT is one
+                // of those unrequested events, and the storage going away
+                // kills the watch just like a delete, so it is treated the
+                // same.
+                if (event and (DELETE_SELF or MOVE_SELF or IN_UNMOUNT) != 0) {
+                    watchEvents.trySend(WatchEvent.WatchedDirGone)
+                    return
+                }
                 if (path == null || path.startsWith(".")) return // .pending-*, .trashed-*
                 if (OcrProcessor.mimeForFileName(path) == null) return
-                newFiles.trySend(File(dirPath, path))
+                watchEvents.trySend(WatchEvent.NewFile(File(dirPath, path)))
             }
         }.also { it.startWatching() }
     }
@@ -439,6 +479,14 @@ class DirectoryMonitorService : Service() {
 
     companion object {
         private const val TAG = "WatchOCR"
+
+        /**
+         * inotify's IN_UNMOUNT bit. The kernel delivers it to every watcher
+         * (no need to request it in the mask) and [FileObserver] passes it on
+         * to onEvent, but unlike DELETE_SELF/MOVE_SELF it has no FileObserver
+         * constant.
+         */
+        private const val IN_UNMOUNT = 0x2000
 
         private const val MONITOR_CHANNEL_ID = "directory_monitor"
 
