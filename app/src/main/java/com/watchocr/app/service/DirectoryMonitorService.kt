@@ -22,6 +22,7 @@ import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.network.ApiHttpException
 import com.watchocr.app.ocr.OcrProcessor
+import com.watchocr.app.ui.describeForUser
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -298,7 +299,7 @@ class DirectoryMonitorService : Service() {
                     recentlyDone[file.path] = SystemClock.elapsedRealtime()
                 }.onFailure {
                     Log.w(TAG, "failed ${file.name}: ${it.message}")
-                    lastErrorText = "Failed to process ${file.name}: ${OcrProcessor.describeFailure(it)}"
+                    lastErrorText = "Failed to process ${file.name}: ${it.describeForUser()}"
                 }
                 updateNotification(lastErrorText ?: idleText)
             }
@@ -472,7 +473,7 @@ class DirectoryMonitorService : Service() {
         // latestStartId for the same reason monitorLoop's stop uses it: the
         // coroutine that failed may long outlive the start that launched it.
         stopWithAlert(
-            "Monitoring stopped unexpectedly (${OcrProcessor.describeFailure(e)}). Reopen WatchOCR to resume.",
+            "Monitoring stopped unexpectedly (${e.describeForUser()}). Reopen WatchOCR to resume.",
             latestStartId
         )
     }

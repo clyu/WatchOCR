@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.watchocr.app.ocr.OcrProcessor
+import com.watchocr.app.ui.describeForUser
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -41,7 +42,7 @@ class ManualOcrViewModel(application: Application) : AndroidViewModel(applicatio
             } finally {
                 isProcessing = false
             }
-            result.onFailure { _messages.send("OCR failed: ${OcrProcessor.describeFailure(it)}") }
+            result.onFailure { _messages.send("OCR failed: ${it.describeForUser()}") }
         }
     }
 }

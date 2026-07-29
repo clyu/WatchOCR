@@ -41,8 +41,13 @@ object GeminiClient {
         "Extract text from the image, translate it to Traditional Chinese, and explain any idioms or slang. " +
             "If an idiom or slang expression contains kanji, also provide its reading as furigana (振り仮名)."
 
-    /** Error details shown to the user (snackbar/notification) are capped at this length. */
-    const val MAX_ERROR_DETAIL_CHARS = 200
+    /**
+     * API-supplied detail embedded in the exceptions thrown below is capped at
+     * this length, so an oversized error body cannot flood a log line. What
+     * finally reaches the user is capped separately and independently — see
+     * [com.watchocr.app.ui.describeForUser].
+     */
+    private const val MAX_ERROR_DETAIL_CHARS = 200
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
