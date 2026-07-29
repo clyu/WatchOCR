@@ -3,14 +3,20 @@ package com.watchocr.app.network
 import com.watchocr.app.data.AnalysisItem
 import com.watchocr.app.data.optStringOrNull
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resumeWithException
 
 data class GeminiOcrResult(
     val ocr: String,
@@ -63,7 +69,7 @@ object GeminiClient {
             .post(payload.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
-        client.newCall(request).execute().use { response ->
+        client.newCall(request).await().use { response ->
             val bodyString = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
                 throw ApiHttpException(
@@ -73,6 +79,28 @@ object GeminiClient {
             }
             parseResponse(bodyString)
         }
+    }
+
+    /**
+     * Suspends over [Call.enqueue] instead of blocking on [Call.execute]:
+     * execute() ignores coroutine cancellation, so a folder switch (whose
+     * reconcile cancel-and-joins the monitor loop mid-upload) or a cleared
+     * ViewModel would stall until the call's timeout. Cancelling the coroutine
+     * cancels the call instead; a response that loses the race and arrives
+     * after cancellation is closed rather than leaked, and OkHttp's own
+     * "Canceled" IOException is dropped by the already-cancelled continuation.
+     */
+    private suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
+        enqueue(object : Callback {
+            override fun onResponse(call: Call, response: Response) {
+                continuation.resume(response) { response.close() }
+            }
+
+            override fun onFailure(call: Call, e: IOException) {
+                continuation.resumeWithException(e)
+            }
+        })
+        continuation.invokeOnCancellation { cancel() }
     }
 
     /** Response schema for the structured JSON output; see [GeminiOcrResult]. */
