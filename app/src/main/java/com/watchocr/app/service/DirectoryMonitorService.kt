@@ -31,6 +31,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.SendChannel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -108,9 +109,6 @@ class DirectoryMonitorService : Service() {
 
     /** Strong reference: a GC'd FileObserver silently stops watching. */
     private var fileObserver: FileObserver? = null
-
-    /** Events reported by [fileObserver]; UNLIMITED so bursts are not dropped. */
-    private val watchEvents = Channel<WatchEvent>(Channel.UNLIMITED)
 
     /**
      * Last processing error, kept visible in the idle notification until a file
@@ -214,13 +212,9 @@ class DirectoryMonitorService : Service() {
         if (monitorJob?.isActive == true && dirPath == watchingDirPath) return
 
         monitorJob?.cancelAndJoin()
-        // The old loop's observer is stopped by now and the new one not yet
-        // started, so everything still queued is from the previous folder —
-        // drop it rather than process it under the new folder.
-        while (watchEvents.tryReceive().isSuccess) { /* discard */ }
-        // Same reason: the message names a file in the folder being left
-        // behind, and monitorLoop opens with it — so without this the new
-        // folder's first notification would report the old folder's failure.
+        // The message names a file in the folder being left behind, and
+        // monitorLoop opens with it — so without this the new folder's first
+        // notification would report the old folder's failure.
         lastErrorText = null
         watchingDirPath = dirPath
         monitorJob = serviceScope.launch { monitorLoop(dirPath, settings.bucketName) }
@@ -233,11 +227,17 @@ class DirectoryMonitorService : Service() {
         // close again — two CLOSE_WRITE events for one image.
         val recentlyDone = LinkedHashMap<String, Long>()
 
+        // Owned by this loop, created fresh for each one: events a previous
+        // folder's observer queued die with its channel, so a folder switch
+        // never needs to drain them to keep the old folder's files out of the
+        // new loop. UNLIMITED so bursts are not dropped.
+        val watchEvents = Channel<WatchEvent>(Channel.UNLIMITED)
+
         // Inside the try so the finally owns the observer from the moment it
         // exists: an exception on the way into the loop must not leave a live
         // observer feeding a channel nobody reads.
         try {
-            startObserver(dirPath)
+            startObserver(dirPath, watchEvents)
             updateNotification(lastErrorText ?: idleText)
             for (event in watchEvents) {
                 val file = when (event) {
@@ -309,7 +309,7 @@ class DirectoryMonitorService : Service() {
     }
 
     @Suppress("DEPRECATION") // String ctor: the File overload is API 29+, minSdk is 26
-    private fun startObserver(dirPath: String) {
+    private fun startObserver(dirPath: String, events: SendChannel<WatchEvent>) {
         // No previous observer to stop: reconcileMonitor joins the old
         // monitorLoop before launching a new one, and that loop's finally
         // always stops and clears the observer it started.
@@ -327,12 +327,12 @@ class DirectoryMonitorService : Service() {
                 // kills the watch just like a delete, so it is treated the
                 // same.
                 if (event and (DELETE_SELF or MOVE_SELF or IN_UNMOUNT) != 0) {
-                    watchEvents.trySend(WatchEvent.WatchedDirGone)
+                    events.trySend(WatchEvent.WatchedDirGone)
                     return
                 }
                 if (path == null || path.startsWith(".")) return // .pending-*, .trashed-*
                 if (OcrProcessor.mimeForFileName(path) == null) return
-                watchEvents.trySend(WatchEvent.NewFile(File(dirPath, path)))
+                events.trySend(WatchEvent.NewFile(File(dirPath, path)))
             }
         }.also { it.startWatching() }
     }
