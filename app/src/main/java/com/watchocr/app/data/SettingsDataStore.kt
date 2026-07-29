@@ -11,8 +11,6 @@ import kotlinx.coroutines.flow.map
 
 private val Context.dataStore by preferencesDataStore(name = "watchocr_settings")
 
-private const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
-
 data class AppSettings(
     /** MediaStore bucket (folder) to watch, or null if none selected. */
     val bucketId: Long? = null,
@@ -31,6 +29,16 @@ data class AppSettings(
      * of the service's start/keep-running precondition.
      */
     val canMonitor: Boolean get() = bucketId != null && apiKey.isNotBlank()
+
+    companion object {
+        /**
+         * Model used when none is configured. Public so the settings UI can
+         * show it in place of a blank field, which [settingsFlow] resolves to
+         * this same value — otherwise the field would contradict the model
+         * requests actually use.
+         */
+        const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
+    }
 }
 
 class SettingsDataStore(private val context: Context) {
@@ -52,7 +60,7 @@ class SettingsDataStore(private val context: Context) {
             apiKey = prefs[Keys.API_KEY] ?: "",
             // Blank counts as unset: the settings field writes every keystroke,
             // so clearing it stores "", which would produce a broken request URL.
-            model = prefs[Keys.MODEL]?.takeUnless { it.isBlank() } ?: DEFAULT_MODEL,
+            model = prefs[Keys.MODEL]?.takeUnless { it.isBlank() } ?: AppSettings.DEFAULT_MODEL,
             retentionDays = prefs[Keys.RETENTION_DAYS] ?: 0
         )
     }

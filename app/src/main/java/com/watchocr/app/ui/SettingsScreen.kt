@@ -42,6 +42,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -216,7 +217,20 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                 },
                 label = { Text("Model") },
                 singleLine = true,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    // A blank model is stored as "unset" and resolves to
+                    // AppSettings.DEFAULT_MODEL, so an emptied field would show
+                    // nothing while requests kept using that default. Filling it
+                    // back in on blur — not on every keystroke, which would make
+                    // the field impossible to clear and retype — keeps what is
+                    // displayed equal to what is sent.
+                    .onFocusChanged { focusState ->
+                        if (!focusState.isFocused && model.isBlank()) {
+                            model = AppSettings.DEFAULT_MODEL
+                            scope.launch { settingsDataStore.setModel(AppSettings.DEFAULT_MODEL) }
+                        }
+                    }
             )
         }
 
