@@ -1,6 +1,8 @@
 package com.watchocr.app.data
 
 import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -9,6 +11,8 @@ import java.util.concurrent.TimeUnit
 /** Deletes OCR history records together with their stored image copies. */
 object HistoryCleanup {
 
+    private const val TAG = "WatchOCR"
+
     /**
      * Deletes records older than [retentionDays] days. A retention of 0 (or
      * less) means "keep forever" and is a no-op.
@@ -16,6 +20,27 @@ object HistoryCleanup {
     suspend fun deleteOlderThan(context: Context, retentionDays: Int) {
         if (retentionDays <= 0) return
         deleteBefore(context, System.currentTimeMillis() - TimeUnit.DAYS.toMillis(retentionDays.toLong()))
+    }
+
+    /**
+     * [deleteOlderThan], with a failed sweep (database locked, unreadable file)
+     * reduced to a log line. Enforcing retention is background housekeeping that
+     * both callers repeat — the service hourly, the UI on every settings change
+     * — so a failure has a next attempt already scheduled and must not escalate:
+     * out of the service it would stop monitoring, out of the composition it
+     * would take the app down.
+     *
+     * Cancellation is rethrown; it is not a failed sweep but the caller's scope
+     * (a stopped service, a leaving composition) shutting down.
+     */
+    suspend fun deleteOlderThanQuietly(context: Context, retentionDays: Int) {
+        try {
+            deleteOlderThan(context, retentionDays)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "history cleanup failed", e)
+        }
     }
 
     /** Deletes all history records and their images. */

@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -56,7 +55,6 @@ import com.watchocr.app.service.DirectoryMonitorService
 import com.watchocr.app.ui.HistoryScreen
 import com.watchocr.app.ui.SettingsScreen
 import com.watchocr.app.ui.theme.WatchOcrTheme
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -133,17 +131,9 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
 
     LaunchedEffect(settings?.retentionDays) {
         val retentionDays = settings?.retentionDays ?: return@LaunchedEffect
-        // Best-effort housekeeping, exactly as in DirectoryMonitorService's
-        // cleanup loop: a failed sweep (database locked, unreadable file) must
-        // not propagate out of the composition and take the app down. The
-        // service's hourly pass tries again.
-        try {
-            HistoryCleanup.deleteOlderThan(context, retentionDays)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w("WatchOCR", "history cleanup failed", e)
-        }
+        // Quietly: a failed sweep must not propagate out of the composition and
+        // take the app down. The service's hourly pass retries.
+        HistoryCleanup.deleteOlderThanQuietly(context, retentionDays)
     }
 
     val pickImageLauncher = rememberLauncherForActivityResult(

@@ -23,7 +23,6 @@ import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.network.ApiHttpException
 import com.watchocr.app.ocr.OcrProcessor
 import com.watchocr.app.ui.describeForUser
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -392,20 +391,17 @@ class DirectoryMonitorService : Service() {
      */
     private suspend fun cleanupLoop() {
         while (currentCoroutineContext().isActive) {
-            // Caught here rather than left to [onCoroutineFailure]: retention
-            // is best-effort housekeeping, so a failed sweep (database locked,
-            // unreadable file) must not escalate into stopping monitoring. The
-            // next hourly pass tries again.
-            try {
-                HistoryCleanup.deleteOlderThan(
-                    applicationContext,
-                    settingsDataStore.settingsFlow.first().retentionDays
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Log.w(TAG, "history cleanup failed", e)
-            }
+            // Quietly: a failed sweep must not reach [onCoroutineFailure] and
+            // escalate into stopping monitoring. The next hourly pass retries.
+            //
+            // The settings read is deliberately left outside that protection,
+            // matching every other DataStore read in this file (reconcileMonitor's
+            // and monitorLoop's are both uncaught): settings this service cannot
+            // read are fatal to monitoring itself, not just to housekeeping.
+            HistoryCleanup.deleteOlderThanQuietly(
+                applicationContext,
+                settingsDataStore.settingsFlow.first().retentionDays
+            )
             delay(CLEANUP_INTERVAL_MS)
         }
     }
