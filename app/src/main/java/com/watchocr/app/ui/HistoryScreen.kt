@@ -33,6 +33,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.style.TextAlign
@@ -44,9 +45,6 @@ import com.watchocr.app.data.OcrRecord
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
-import java.util.Locale
-
-private val dateFormatter = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
 
 @Composable
 fun HistoryScreen() {
@@ -58,6 +56,14 @@ fun HistoryScreen() {
     // null until Room's first emission, then the records, newest first.
     val records = recordsFlow.collectAsStateWithLifecycle(initialValue = null).value
     val clipboardManager = LocalClipboardManager.current
+
+    // Built from the current configuration rather than once per process: a
+    // system language change recreates the activity but not the process, so a
+    // top-level formatter would keep formatting in the language the app happened
+    // to start in. Hoisted out of the item content too — a per-card remember
+    // would rebuild it as the lazy list recycles rows during a scroll.
+    val locales = LocalConfiguration.current.locales
+    val dateFormatter = remember(locales) { SimpleDateFormat("yyyy-MM-dd HH:mm", locales[0]) }
 
     // Hoisted above the branching below so the set of remembered slots does not
     // depend on which state the screen is in: an empty (or not-yet-loaded)
@@ -116,6 +122,7 @@ fun HistoryScreen() {
             items(records, key = { it.id }) { record ->
                 OcrRecordCard(
                     record = record,
+                    dateFormatter = dateFormatter,
                     onCopyOcrText = {
                         clipboardManager.setText(AnnotatedString(record.ocrText))
                         Toast.makeText(context, "Original text copied", Toast.LENGTH_SHORT).show()
@@ -127,7 +134,11 @@ fun HistoryScreen() {
 }
 
 @Composable
-private fun OcrRecordCard(record: OcrRecord, onCopyOcrText: () -> Unit) {
+private fun OcrRecordCard(
+    record: OcrRecord,
+    dateFormatter: SimpleDateFormat,
+    onCopyOcrText: () -> Unit
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.Top) {
