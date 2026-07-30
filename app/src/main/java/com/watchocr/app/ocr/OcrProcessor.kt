@@ -111,74 +111,65 @@ object OcrProcessor {
         uri: Uri,
         apiKey: String,
         model: String
-    ): Result<OcrRecord> = withActiveJob { processImageUncounted(context, uri, apiKey, model) }
+    ): Result<OcrRecord> = withActiveJob {
+        withContext(Dispatchers.IO) {
+            try {
+                val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    ?: return@withContext Result.failure(Exception("Unable to open image: $uri"))
+                if (rawBytes.isEmpty()) {
+                    return@withContext Result.failure(Exception("Image is empty: $uri"))
+                }
+                val rawMime = context.contentResolver.getType(uri) ?: guessMimeType(uri)
 
-    /**
-     * Split out purely so [processImage] can wrap it: keeping the body here
-     * leaves it untouched by the counting concern.
-     */
-    private suspend fun processImageUncounted(
-        context: Context,
-        uri: Uri,
-        apiKey: String,
-        model: String
-    ): Result<OcrRecord> = withContext(Dispatchers.IO) {
-        try {
-            val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: return@withContext Result.failure(Exception("Unable to open image: $uri"))
-            if (rawBytes.isEmpty()) {
-                return@withContext Result.failure(Exception("Image is empty: $uri"))
+                val (bytes, mimeType) = prepareForUpload(rawBytes, rawMime)
+                val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
+
+                // Throws on failure; the catch below turns that into this Result.
+                val geminiResult = GeminiClient.ocrAndTranslate(apiKey, model, base64Data, mimeType)
+
+                val imagesDir = File(context.filesDir, "images").apply { mkdirs() }
+                val extension = extensionForMime(mimeType)
+                val imageFile = File(imagesDir, "${UUID.randomUUID()}.$extension")
+                imageFile.writeBytes(bytes)
+
+                val record = OcrRecord(
+                    imagePath = imageFile.absolutePath,
+                    ocrText = geminiResult.ocr,
+                    translation = geminiResult.translation,
+                    analysis = geminiResult.analysis
+                )
+
+                val id = try {
+                    AppDatabase.getInstance(context).ocrRecordDao().insert(record)
+                } catch (e: Throwable) {
+                    // The record never made it into the database, so nothing would
+                    // ever clean up the image copy — remove it here. Throwable, not
+                    // Exception: HistoryCleanup only deletes files a row points at,
+                    // so a file orphaned by an OutOfMemoryError (or by cancellation)
+                    // would sit in app storage forever.
+                    imageFile.delete()
+                    throw e
+                }
+
+                // insert() returns the generated rowid; carrying it back keeps the
+                // returned record from advertising the unsaved placeholder id 0.
+                Result.success(record.copy(id = id))
+            } catch (e: CancellationException) {
+                throw e // cancellation must propagate, not surface as a failed OCR
+            } catch (e: Exception) {
+                Result.failure(e)
+            } catch (e: OutOfMemoryError) {
+                // Catching an Error is normally wrong, but this one is expected
+                // here and recoverable: decoding, re-encoding and base64-ing an
+                // image are the allocations this app can realistically fail, and a
+                // failed allocation leaves nothing half-written — the bitmap and
+                // buffers are simply released. Left uncaught it escapes the Result
+                // contract entirely and kills the process, taking the monitor with
+                // it; as a failure it is just one skipped image. Not retried:
+                // isRetryable() has no case for it, and an immediate second attempt
+                // would allocate exactly as much again.
+                Result.failure(e)
             }
-            val rawMime = context.contentResolver.getType(uri) ?: guessMimeType(uri)
-
-            val (bytes, mimeType) = prepareForUpload(rawBytes, rawMime)
-            val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
-
-            // Throws on failure; the catch below turns that into this Result.
-            val geminiResult = GeminiClient.ocrAndTranslate(apiKey, model, base64Data, mimeType)
-
-            val imagesDir = File(context.filesDir, "images").apply { mkdirs() }
-            val extension = extensionForMime(mimeType)
-            val imageFile = File(imagesDir, "${UUID.randomUUID()}.$extension")
-            imageFile.writeBytes(bytes)
-
-            val record = OcrRecord(
-                imagePath = imageFile.absolutePath,
-                ocrText = geminiResult.ocr,
-                translation = geminiResult.translation,
-                analysis = geminiResult.analysis
-            )
-
-            val id = try {
-                AppDatabase.getInstance(context).ocrRecordDao().insert(record)
-            } catch (e: Throwable) {
-                // The record never made it into the database, so nothing would
-                // ever clean up the image copy — remove it here. Throwable, not
-                // Exception: HistoryCleanup only deletes files a row points at,
-                // so a file orphaned by an OutOfMemoryError (or by cancellation)
-                // would sit in app storage forever.
-                imageFile.delete()
-                throw e
-            }
-
-            // insert() returns the generated rowid; carrying it back keeps the
-            // returned record from advertising the unsaved placeholder id 0.
-            Result.success(record.copy(id = id))
-        } catch (e: CancellationException) {
-            throw e // cancellation must propagate, not surface as a failed OCR
-        } catch (e: Exception) {
-            Result.failure(e)
-        } catch (e: OutOfMemoryError) {
-            // Catching an Error is normally wrong, but this one is expected
-            // here and recoverable: decoding, re-encoding and base64-ing an
-            // image are the allocations this app can realistically fail, and a
-            // failed allocation leaves nothing half-written — the bitmap and
-            // buffers are simply released. Left uncaught it escapes the Result
-            // contract entirely and kills the process, taking the monitor with
-            // it; as a failure it is just one skipped image. Not retried:
-            // isRetryable() has no case for it, and an immediate second attempt
-            // would allocate exactly as much again.
-            Result.failure(e)
         }
     }
 
