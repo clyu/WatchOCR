@@ -19,8 +19,7 @@ internal fun JSONObject.optStringOrNull(name: String): String? =
 
 /**
  * One explained idiom/slang expression. [furigana] is only present when
- * [expression] contains kanji. [expression] is empty for records saved
- * before analysis items were structured; only [explanation] is set then.
+ * [expression] contains kanji.
  */
 data class AnalysisItem(
     val expression: String,
@@ -69,12 +68,10 @@ class AnalysisListConverter {
     fun toList(value: String): List<AnalysisItem> {
         if (value.isBlank()) return emptyList()
         val array = JSONArray(value)
-        return (0 until array.length()).map { index ->
-            when (val entry = array.get(index)) {
-                is JSONObject -> AnalysisItem.fromJson(entry)
-                // Rows written before analysis items were structured hold plain strings.
-                else -> AnalysisItem(expression = "", furigana = null, explanation = entry.toString())
-            }
+        // optJSONObject, not get: an entry that is not an object is dropped
+        // rather than crashing the History query it is being read for.
+        return (0 until array.length()).mapNotNull { index ->
+            array.optJSONObject(index)?.let(AnalysisItem::fromJson)
         }
     }
 }

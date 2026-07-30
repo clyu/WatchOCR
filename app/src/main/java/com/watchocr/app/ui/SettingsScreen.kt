@@ -318,7 +318,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                                             if (dirPath == null) {
                                                 toast("Couldn't determine this folder's path; choose another folder.")
                                             } else {
-                                                settingsDataStore.setWatchedBucket(bucket.id, bucket.name, dirPath)
+                                                settingsDataStore.setWatchedBucket(bucket.name, dirPath)
                                                 // Revives a self-stopped service even when the
                                                 // re-selected folder is the one it was already
                                                 // configured for — MainActivity's LaunchedEffect

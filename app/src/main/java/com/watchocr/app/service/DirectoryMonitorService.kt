@@ -17,7 +17,6 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.watchocr.app.MainActivity
 import com.watchocr.app.data.HistoryCleanup
-import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.network.ApiHttpException
@@ -180,7 +179,7 @@ class DirectoryMonitorService : Service() {
     }
 
     /**
-     * Resolves the configured directory and (re)starts [monitorLoop] for it,
+     * Reads the configured directory and (re)starts [monitorLoop] for it,
      * leaving an already-running loop untouched when the directory is
      * unchanged. Joining the old loop before starting the new one keeps its
      * cleanup from stopping the new loop's observer.
@@ -196,13 +195,10 @@ class DirectoryMonitorService : Service() {
             stopSelf(startId)
             return
         }
-        // Installs upgraded from the MediaStore-based version have a bucketId
-        // (canMonitor guarantees one) but no persisted path — resolve it once
-        // and persist. Only that upgrade path needs the bucketId, so it is read
-        // here rather than above: every other reconcile already has the path.
+        // canMonitor already established that the path is set, so the null branch
+        // is only here to narrow the type. isDirectory is the real check: the
+        // folder can be deleted, renamed or unmounted between two reconciles.
         val dirPath = settings.watchedDirPath
-            ?: MediaStoreImages.queryBucketPath(applicationContext, checkNotNull(settings.bucketId))
-                ?.also { settingsDataStore.setWatchedDirPath(it) }
         if (dirPath == null || !File(dirPath).isDirectory) {
             stopWithAlert("Watched folder unavailable — re-select it in Settings.", startId)
             return

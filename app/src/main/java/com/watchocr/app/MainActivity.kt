@@ -111,9 +111,9 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     // Keyed on canMonitor (does a key exist), not the key's text: every
     // keystroke in the API key field writes to DataStore, and start() is
     // idempotent but not free — no point invoking startForegroundService per
-    // keystroke. bucketId stays a key so switching folders restarts the loop.
+    // keystroke. The path stays a key so switching folders restarts the loop.
     val canMonitor = settings?.canMonitor == true
-    LaunchedEffect(settings?.bucketId, canMonitor) {
+    LaunchedEffect(settings?.watchedDirPath, canMonitor) {
         // Skipped until DataStore's first emission: canMonitor reads false
         // while settings is still null, and stopping on that would take down a
         // monitor that is already running (this effect runs again from scratch
