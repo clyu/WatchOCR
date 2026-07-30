@@ -105,7 +105,15 @@ class DirectoryMonitorService : Service() {
     /** Serializes [reconcileMonitor] so overlapping start() calls cannot race. */
     private val reconcileLock = Mutex()
 
-    /** Directory the running monitor loop watches; null when no loop is running. */
+    /**
+     * Directory the running monitor loop watches; null when no loop is running.
+     *
+     * Volatile because the loop clears it on its way out while [reconcileMonitor]
+     * may be reading it concurrently — that read is the whole point of clearing
+     * it, and in the case it guards against there is no join between the two to
+     * publish the write.
+     */
+    @Volatile
     private var watchingDirPath: String? = null
 
     /** Strong reference: a GC'd FileObserver silently stops watching. */
@@ -303,6 +311,16 @@ class DirectoryMonitorService : Service() {
                 updateNotification(lastErrorText ?: idleText)
             }
         } finally {
+            // Makes this loop's exit visible to reconcileMonitor, whose
+            // "already watching that folder" check would otherwise be satisfied
+            // by a loop on its way out: a coroutine running this block after a
+            // plain `return` (the stopWithAlert paths above) is still Completing
+            // rather than completed, so its Job reports isActive == true. A
+            // start command delivered in that window would cancel the alert,
+            // see the stale path, return early, and leave nothing watching
+            // behind a notification still claiming otherwise. Cleared here
+            // rather than at each `return` so cancellation is covered too.
+            watchingDirPath = null
             fileObserver?.stopWatching()
             fileObserver = null
         }
