@@ -29,8 +29,16 @@ object HistoryCleanup {
         val dao = AppDatabase.getInstance(context).ocrRecordDao()
         val expired = dao.getOlderThan(cutoffMillis)
         if (expired.isEmpty()) return@withContext
-        expired.forEach { File(it.imagePath).delete() }
+        // Rows first, files second, deliberately: the two deletes are not one
+        // transaction, so whichever runs first decides what a failure (database
+        // locked, process killed) leaves behind. Interrupted this way around it
+        // is an image file no row points at — wasted bytes nobody sees.
+        // The other way around it is a row pointing at a file that is already
+        // gone, which shows up as a permanently broken thumbnail in History and
+        // which nothing ever repairs.
+        //
         // Chunked to stay under SQLite's bound-variable limit.
         expired.map { it.id }.chunked(500).forEach { dao.deleteByIds(it) }
+        expired.forEach { File(it.imagePath).delete() }
     }
 }
