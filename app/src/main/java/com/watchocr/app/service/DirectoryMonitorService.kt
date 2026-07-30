@@ -231,8 +231,10 @@ class DirectoryMonitorService : Service() {
         val idleText = "Watching ${bucketName ?: dirPath} for new images…"
 
         // Some camera apps close a file, then reopen it to write EXIF and
-        // close again — two CLOSE_WRITE events for one image.
-        val recentlyDone = LinkedHashMap<String, Long>()
+        // close again — two CLOSE_WRITE events for one image. Entries age out by
+        // timestamp on every event, not by insertion order, so nothing here
+        // needs an ordered map.
+        val recentlyDone = HashMap<String, Long>()
 
         // Owned by this loop, created fresh for each one: events a previous
         // folder's observer queued die with its channel, so a folder switch
