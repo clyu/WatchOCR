@@ -119,7 +119,14 @@ object OcrProcessor {
                 if (rawBytes.isEmpty()) {
                     return@withContext Result.failure(Exception("Image is empty: $uri"))
                 }
-                val rawMime = context.contentResolver.getType(uri) ?: guessMimeType(uri)
+                // getType only resolves content:// providers, so it returns null
+                // for the file:// URIs the monitor passes in; there the extension
+                // is the real answer, and one [mimeForFileName] already accepted
+                // before the file was queued. The literal is a last resort for a
+                // name carrying no usable extension at all.
+                val rawMime = context.contentResolver.getType(uri)
+                    ?: mimeForFileName(uri.lastPathSegment.orEmpty())
+                    ?: "image/jpeg"
 
                 val (bytes, mimeType) = prepareForUpload(rawBytes, rawMime)
                 val base64Data = Base64.encodeToString(bytes, Base64.NO_WRAP)
@@ -263,7 +270,4 @@ object OcrProcessor {
      */
     fun mimeForFileName(fileName: String): String? =
         MIME_BY_EXTENSION[fileName.substringAfterLast('.', "").lowercase()]
-
-    private fun guessMimeType(uri: Uri): String =
-        mimeForFileName(uri.lastPathSegment.orEmpty()) ?: "image/jpeg"
 }
