@@ -16,7 +16,7 @@ object HistoryCleanup {
      * Deletes records older than [retentionDays] days. A retention of 0 (or
      * less) means "keep forever" and is a no-op.
      */
-    suspend fun deleteOlderThan(context: Context, retentionDays: Int) {
+    private suspend fun deleteOlderThan(context: Context, retentionDays: Int) {
         if (retentionDays <= 0) return
         deleteBefore(context, System.currentTimeMillis() - TimeUnit.DAYS.toMillis(retentionDays.toLong()))
     }
@@ -28,6 +28,10 @@ object HistoryCleanup {
      * — so a failure has a next attempt already scheduled and must not escalate:
      * out of the service it would stop monitoring, out of the composition it
      * would take the app down.
+     *
+     * The only way in: [deleteOlderThan] is private precisely so that argument
+     * cannot be sidestepped by a future caller reaching for the louder-looking
+     * name.
      *
      * Cancellation is rethrown; it is not a failed sweep but the caller's scope
      * (a stopped service, a leaving composition) shutting down.
