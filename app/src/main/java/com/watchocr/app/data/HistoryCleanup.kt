@@ -2,6 +2,7 @@ package com.watchocr.app.data
 
 import android.content.Context
 import android.util.Log
+import com.watchocr.app.LOG_TAG
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -10,8 +11,6 @@ import java.util.concurrent.TimeUnit
 
 /** Deletes OCR history records together with their stored image copies. */
 object HistoryCleanup {
-
-    private const val TAG = "WatchOCR"
 
     /**
      * Deletes records older than [retentionDays] days. A retention of 0 (or
@@ -39,7 +38,7 @@ object HistoryCleanup {
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            Log.w(TAG, "history cleanup failed", e)
+            Log.w(LOG_TAG, "history cleanup failed", e)
         }
     }
 

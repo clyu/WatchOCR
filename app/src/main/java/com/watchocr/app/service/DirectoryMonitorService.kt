@@ -15,6 +15,7 @@ import android.os.SystemClock
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.watchocr.app.LOG_TAG
 import com.watchocr.app.MainActivity
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.OcrRecord
@@ -247,7 +248,7 @@ class DirectoryMonitorService : Service() {
             for (event in watchEvents) {
                 val file = when (event) {
                     WatchEvent.WatchedDirGone -> {
-                        Log.w(TAG, "watched directory gone, stopping monitor")
+                        Log.w(LOG_TAG, "watched directory gone, stopping monitor")
                         // latestStartId for the same reason as the API-key stop
                         // below; reconcile clears this alert once the folder is
                         // viable again (e.g. re-selected, or recreated by the
@@ -263,14 +264,14 @@ class DirectoryMonitorService : Service() {
                 val now = SystemClock.elapsedRealtime()
                 recentlyDone.entries.removeAll { now - it.value > DEDUP_WINDOW_MS }
                 if (recentlyDone.containsKey(file.path)) {
-                    Log.d(TAG, "duplicate event for ${file.name}, skipping")
+                    Log.d(LOG_TAG, "duplicate event for ${file.name}, skipping")
                     continue
                 }
                 if (!file.isFile) continue // renamed/deleted since the event
                 if (file.length() == 0L) {
                     // Creation handshake of a two-pass writer; the write that
                     // fills the file triggers its own CLOSE_WRITE.
-                    Log.d(TAG, "${file.name} is empty, awaiting next write")
+                    Log.d(LOG_TAG, "${file.name} is empty, awaiting next write")
                     continue
                 }
 
@@ -279,7 +280,7 @@ class DirectoryMonitorService : Service() {
                     // Key cleared after startup: every upload would fail, so
                     // stop instead of burning retries; MainActivity restarts
                     // the service once a key is set again.
-                    Log.w(TAG, "API key cleared, stopping monitor")
+                    Log.w(LOG_TAG, "API key cleared, stopping monitor")
                     // latestStartId, not the one that launched this loop: that
                     // one is long superseded (every app open starts the service
                     // again), so stopping against it would never take effect.
@@ -289,20 +290,20 @@ class DirectoryMonitorService : Service() {
                     )
                     return
                 }
-                Log.i(TAG, "processing ${file.name}")
+                Log.i(LOG_TAG, "processing ${file.name}")
                 updateNotification("Processing ${file.name}…")
 
                 OcrProcessor.withActiveJob {
                     processWithRetry(file, current.apiKey, current.model)
                 }.onSuccess {
-                    Log.i(TAG, "processed ${file.name}")
+                    Log.i(LOG_TAG, "processed ${file.name}")
                     lastErrorText = null
                     // Dedup successes only: writers that create the file empty
                     // and fill it in a second pass (two CLOSE_WRITEs) must stay
                     // eligible for the event that carries the real content.
                     recentlyDone[file.path] = SystemClock.elapsedRealtime()
                 }.onFailure {
-                    Log.w(TAG, "failed ${file.name}: ${it.message}")
+                    Log.w(LOG_TAG, "failed ${file.name}: ${it.message}")
                     lastErrorText = "Failed to process ${file.name}: ${it.describeForUser()}"
                 }
                 updateNotification(lastErrorText ?: idleText)
@@ -363,7 +364,7 @@ class DirectoryMonitorService : Service() {
             if (result.isSuccess || attempt >= MAX_ATTEMPTS || !isRetryable(result.exceptionOrNull())) {
                 return result
             }
-            Log.w(TAG, "retrying ${file.name} (attempt ${attempt + 1}): ${result.exceptionOrNull()?.message}")
+            Log.w(LOG_TAG, "retrying ${file.name} (attempt ${attempt + 1}): ${result.exceptionOrNull()?.message}")
             delay(RETRY_DELAY_MS)
             attempt++
         }
@@ -480,7 +481,7 @@ class DirectoryMonitorService : Service() {
      * cannot trip this.
      */
     private fun onCoroutineFailure(e: Throwable) {
-        Log.e(TAG, "monitor coroutine failed", e)
+        Log.e(LOG_TAG, "monitor coroutine failed", e)
         // latestStartId for the same reason monitorLoop's stop uses it: the
         // coroutine that failed may long outlive the start that launched it.
         stopWithAlert(
@@ -490,8 +491,6 @@ class DirectoryMonitorService : Service() {
     }
 
     companion object {
-        private const val TAG = "WatchOCR"
-
         /**
          * inotify's IN_UNMOUNT bit. The kernel delivers it to every watcher
          * (no need to request it in the mask) and [FileObserver] passes it on
