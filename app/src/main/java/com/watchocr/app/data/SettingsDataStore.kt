@@ -1,12 +1,15 @@
 package com.watchocr.app.data
 
 import android.content.Context
+import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 
 private val Context.dataStore by preferencesDataStore(name = "watchocr_settings")
 
@@ -60,22 +63,28 @@ class SettingsDataStore(private val context: Context) {
         )
     }
 
-    suspend fun setWatchedBucket(bucketName: String, dirPath: String) {
-        context.dataStore.edit {
-            it[Keys.BUCKET_NAME] = bucketName
-            it[Keys.WATCHED_DIR_PATH] = dirPath
-        }
+    suspend fun setWatchedBucket(bucketName: String, dirPath: String) = persist {
+        it[Keys.BUCKET_NAME] = bucketName
+        it[Keys.WATCHED_DIR_PATH] = dirPath
     }
 
-    suspend fun setApiKey(key: String) {
-        context.dataStore.edit { it[Keys.API_KEY] = key }
-    }
+    suspend fun setApiKey(key: String) = persist { it[Keys.API_KEY] = key }
 
-    suspend fun setModel(model: String) {
-        context.dataStore.edit { it[Keys.MODEL] = model }
-    }
+    suspend fun setModel(model: String) = persist { it[Keys.MODEL] = model }
 
-    suspend fun setRetentionDays(days: Int) {
-        context.dataStore.edit { it[Keys.RETENTION_DAYS] = days }
+    suspend fun setRetentionDays(days: Int) = persist { it[Keys.RETENTION_DAYS] = days }
+
+    /**
+     * The one way anything in here writes, so that "once called, the value
+     * lands" holds for every setting without each caller arranging it.
+     *
+     * NonCancellable because the callers are UI event handlers running on the
+     * composition's scope, which a rotation cancels: the settings field would
+     * then re-seed from a DataStore that never got the last edit, silently
+     * reverting what the user just typed. The writes are single-key and
+     * DataStore serializes them anyway, so nothing is held up for long.
+     */
+    private suspend fun persist(transform: suspend (MutablePreferences) -> Unit) {
+        withContext(NonCancellable) { context.dataStore.edit(transform) }
     }
 }

@@ -5,6 +5,7 @@ import android.util.Log
 import com.watchocr.app.LOG_TAG
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
@@ -34,7 +35,10 @@ object HistoryCleanup {
      * name.
      *
      * Cancellation is rethrown; it is not a failed sweep but the caller's scope
-     * (a stopped service, a leaving composition) shutting down.
+     * (a stopped service, a leaving composition) shutting down. It still
+     * reaches here after [deleteBefore]'s NonCancellable section — but only
+     * from either side of it, never from within, so a cancelled sweep is
+     * always one that either did nothing or ran to the end.
      */
     suspend fun deleteOlderThanQuietly(context: Context, retentionDays: Int) {
         try {
@@ -66,7 +70,17 @@ object HistoryCleanup {
         // which nothing ever repairs.
         //
         // Chunked to stay under SQLite's bound-variable limit.
-        expired.map { it.id }.chunked(500).forEach { dao.deleteByIds(it) }
-        expired.forEach { File(it.imagePath).delete() }
+        //
+        // NonCancellable draws the line here rather than at the call sites: the
+        // query above is safe to abandon (nothing has been deleted yet), but
+        // once the first chunk is gone the sweep is half-applied, and every
+        // caller runs on a scope that gets cancelled routinely — the service's
+        // at onDestroy, the UI's on a rotation or a tab switch. Leaving each
+        // caller to remember that is how "Clear History" ends up clearing part
+        // of the history. Bounded work, so nothing waits on it for long.
+        withContext(NonCancellable) {
+            expired.map { it.id }.chunked(500).forEach { dao.deleteByIds(it) }
+            expired.forEach { File(it.imagePath).delete() }
+        }
     }
 }
