@@ -42,6 +42,21 @@ data class AnalysisItem(
             furigana = json.optStringOrNull("furigana"),
             explanation = json.optStringOrNull("explanation").orEmpty()
         )
+
+        /**
+         * Parses an array of the [fromJson] shape — the form the analysis takes
+         * both in the Gemini response and in the Room column it is stored as.
+         *
+         * optJSONObject, not get: an entry that is not an object at all is
+         * dropped rather than throwing. In a model response that leaves one
+         * explanation missing instead of failing the whole OCR; in a stored
+         * column it keeps a single bad row from crashing the History query it
+         * is being read for.
+         */
+        fun listFromJson(array: JSONArray): List<AnalysisItem> =
+            (0 until array.length()).mapNotNull { index ->
+                array.optJSONObject(index)?.let(::fromJson)
+            }
     }
 }
 
@@ -67,11 +82,6 @@ class AnalysisListConverter {
     @TypeConverter
     fun toList(value: String): List<AnalysisItem> {
         if (value.isBlank()) return emptyList()
-        val array = JSONArray(value)
-        // optJSONObject, not get: an entry that is not an object is dropped
-        // rather than crashing the History query it is being read for.
-        return (0 until array.length()).mapNotNull { index ->
-            array.optJSONObject(index)?.let(AnalysisItem::fromJson)
-        }
+        return AnalysisItem.listFromJson(JSONArray(value))
     }
 }

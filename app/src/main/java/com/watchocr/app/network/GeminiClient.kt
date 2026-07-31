@@ -212,11 +212,7 @@ object GeminiClient {
             )
         }
         val analysis = resultJson.optJSONArray("analysis")
-            ?.let { array ->
-                (0 until array.length()).mapNotNull { index ->
-                    array.optJSONObject(index)?.let(AnalysisItem::fromJson)
-                }
-            }
+            ?.let(AnalysisItem::listFromJson)
             .orEmpty()
 
         return GeminiOcrResult(
