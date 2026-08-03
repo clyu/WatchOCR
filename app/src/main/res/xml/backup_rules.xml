@@ -1,6 +1,27 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Auto Backup rules for Android 11 and below (API < 31). The settings
-     DataStore holds the Gemini API key, so it must never leave the device. -->
+<!-- Auto Backup rules for Android 11 and below (API < 31). Everything this app
+     persists is excluded, because all of it is either a secret or the user's own
+     content: the settings DataStore holds the Gemini API key, and the history
+     database and image copies hold whatever the watched folder happened to
+     contain. Auto Backup would otherwise upload both to the user's Drive, which
+     is exactly what README.md promises does not happen.
+
+     Every rule below names a directory or spells out each sibling file, because
+     matching is per-path: a rule naming one file leaves the temporary and
+     journal files written beside it fully backed up. -->
 <full-backup-content>
-    <exclude domain="file" path="datastore/watchocr_settings.preferences_pb" />
+    <!-- The whole directory, not the .preferences_pb file: DataStore writes
+         atomically by filling a sibling .tmp and renaming it over the target, so
+         the key also exists under that second name — indefinitely, if the
+         process is killed between the two steps. -->
+    <exclude domain="file" path="datastore" />
+    <!-- OcrProcessor's copy of every processed image. -->
+    <exclude domain="file" path="images" />
+    <!-- OCR text, translations and analyses. Room's AUTOMATIC journal mode
+         resolves to WAL on ordinary devices (-wal/-shm) and to TRUNCATE on
+         low-RAM ones (-journal), so all three siblings are listed. -->
+    <exclude domain="database" path="watchocr.db" />
+    <exclude domain="database" path="watchocr.db-wal" />
+    <exclude domain="database" path="watchocr.db-shm" />
+    <exclude domain="database" path="watchocr.db-journal" />
 </full-backup-content>
