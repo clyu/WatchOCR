@@ -293,18 +293,32 @@ class DirectoryMonitorService : Service() {
                 Log.i(LOG_TAG, "processing ${file.name}")
                 updateNotification("Processing ${file.name}…")
 
-                OcrProcessor.withActiveJob {
+                val failure = OcrProcessor.withActiveJob {
                     processWithRetry(file, current.apiKey, current.model)
-                }.onSuccess {
+                }.exceptionOrNull()
+                if (failure == null) {
                     Log.i(LOG_TAG, "processed ${file.name}")
                     lastErrorText = null
-                    // Dedup successes only: writers that create the file empty
-                    // and fill it in a second pass (two CLOSE_WRITEs) must stay
-                    // eligible for the event that carries the real content.
+                } else {
+                    Log.w(LOG_TAG, "failed ${file.name}: ${failure.message}")
+                    lastErrorText = "Failed to process ${file.name}: ${failure.describeForUser()}"
+                }
+                // Dedup every outcome that settles these bytes for good, which
+                // [isRetryable] already names: a success (null is not retryable,
+                // so this covers it) and a permanent failure — an invalid key,
+                // an image the API cannot read. A duplicate event carries the
+                // same bytes, so re-running one of those buys a second identical
+                // rejection at the price of another full retry cycle, and the
+                // 429 case makes that actively counterproductive.
+                //
+                // Transient failures stay out on purpose: there a duplicate
+                // event is a free extra attempt once the network recovers.
+                //
+                // Nothing needs to be held back for the two-pass writer that
+                // creates a file empty — that event never reaches here, having
+                // been dropped by the length check above.
+                if (!isRetryable(failure)) {
                     recentlyDone[file.path] = SystemClock.elapsedRealtime()
-                }.onFailure {
-                    Log.w(LOG_TAG, "failed ${file.name}: ${it.message}")
-                    lastErrorText = "Failed to process ${file.name}: ${it.describeForUser()}"
                 }
                 updateNotification(lastErrorText ?: idleText)
             }
@@ -376,6 +390,10 @@ class DirectoryMonitorService : Service() {
      * and 429 (rate limited), which are transient like the 5xx range. So is a
      * file deleted/renamed after its event (FileNotFoundException): it won't
      * reappear, and if it does it fires a new event.
+     *
+     * [e] is nullable for the dedup call in [monitorLoop], which passes the
+     * absence of a failure and relies on getting false back — narrowing the
+     * parameter would make a success stop being deduped.
      */
     private fun isRetryable(e: Throwable?): Boolean = when (e) {
         is FileNotFoundException -> false
