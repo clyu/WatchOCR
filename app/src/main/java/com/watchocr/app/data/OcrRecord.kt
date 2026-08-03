@@ -1,10 +1,13 @@
 package com.watchocr.app.data
 
+import android.util.Log
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
+import com.watchocr.app.LOG_TAG
 import org.json.JSONArray
+import org.json.JSONException
 import org.json.JSONObject
 
 /**
@@ -79,9 +82,25 @@ class AnalysisListConverter {
         return array.toString()
     }
 
+    /**
+     * A column that is not a JSON array at all reads as no analysis rather than
+     * throwing. Room calls this from inside the History query, so an exception
+     * here does not cost one record its analysis — it propagates out of the Flow
+     * and takes the whole screen down on every read, leaving nothing short of
+     * clearing app data to recover from. Degrading to an empty list costs one
+     * card its analysis section and leaves its text and translation intact.
+     *
+     * The counterpart to [AnalysisItem.listFromJson]'s own tolerance, which
+     * covers the entries of a well-formed array but not the array itself.
+     */
     @TypeConverter
     fun toList(value: String): List<AnalysisItem> {
         if (value.isBlank()) return emptyList()
-        return AnalysisItem.listFromJson(JSONArray(value))
+        return try {
+            AnalysisItem.listFromJson(JSONArray(value))
+        } catch (e: JSONException) {
+            Log.w(LOG_TAG, "unparseable analysis column, dropping", e)
+            emptyList()
+        }
     }
 }
