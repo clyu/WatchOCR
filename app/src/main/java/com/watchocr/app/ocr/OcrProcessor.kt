@@ -24,21 +24,36 @@ import java.util.UUID
 object OcrProcessor {
 
     /**
+     * MIME type -> the one filename extension the stored copy of such an image
+     * is named with. Written in this direction because it is the direction with
+     * a single right answer per entry: several spellings may map onto image/jpeg
+     * on the way in, but a file being written has to pick exactly one of them.
+     */
+    private val EXTENSION_BY_MIME: Map<String, String> = mapOf(
+        "image/jpeg" to "jpg",
+        "image/png" to "png",
+        "image/webp" to "webp",
+        "image/gif" to "gif",
+        "image/bmp" to "bmp",
+        "image/heic" to "heic",
+        "image/heif" to "heif",
+        "image/avif" to "avif"
+    )
+
+    /**
      * Lowercase filename extension -> MIME type for the image formats the app
      * accepts. Reached only through [mimeForFileName], which is also the
      * single source of truth for which files the directory monitor picks up.
+     *
+     * Inverted from [EXTENSION_BY_MIME] rather than written out again, so a
+     * format added to one is never missing from the other; the literals below
+     * are only the spellings that are alternative names for a format already
+     * listed there, not formats of their own. Must stay declared after it —
+     * these are initialized in declaration order.
      */
-    private val MIME_BY_EXTENSION: Map<String, String> = mapOf(
-        "jpg" to "image/jpeg",
-        "jpeg" to "image/jpeg",
-        "png" to "image/png",
-        "webp" to "image/webp",
-        "gif" to "image/gif",
-        "bmp" to "image/bmp",
-        "heic" to "image/heic",
-        "heif" to "image/heif",
-        "avif" to "image/avif"
-    )
+    private val MIME_BY_EXTENSION: Map<String, String> =
+        EXTENSION_BY_MIME.entries.associate { (mime, extension) -> extension to mime } +
+            mapOf("jpeg" to "image/jpeg")
 
     /**
      * Image MIME types the Gemini API accepts as inline data
@@ -257,11 +272,14 @@ object OcrProcessor {
      * uploaded as. [prepareForUpload] passes small images in API-supported
      * formats through untouched, so the copy is not always JPEG or PNG —
      * naming HEIC or WebP bytes `.jpg` would leave a file whose extension
-     * contradicts its content. [MIME_BY_EXTENSION] iterates in declaration
-     * order, so image/jpeg resolves to "jpg" rather than "jpeg".
+     * contradicts its content.
+     *
+     * The fallback covers the MIME types [prepareForUpload] passes through
+     * without recognising (an undecodable format the API turned out to accept
+     * anyway); everything it re-encodes is image/jpeg, which is in the map.
      */
     private fun extensionForMime(mimeType: String): String =
-        MIME_BY_EXTENSION.entries.firstOrNull { it.value == mimeType }?.key ?: "jpg"
+        EXTENSION_BY_MIME[mimeType] ?: "jpg"
 
     /**
      * MIME type for [fileName] from its extension, or null when the extension
