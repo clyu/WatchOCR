@@ -112,20 +112,26 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     // keystroke in the API key field writes to DataStore, and start() is
     // idempotent but not free — no point invoking startForegroundService per
     // keystroke. The path stays a key so switching folders restarts the loop.
-    val canMonitor = settings?.canMonitor == true
+    //
+    // Left nullable rather than flattened with `== true`, so "DataStore has not
+    // emitted yet" is a key value of its own and the decision below can be read
+    // straight off a key. Flattened to false it is indistinguishable from
+    // settings that carry neither a folder nor a key: both keys read
+    // (null, false) before and after that emission, so the effect would not run
+    // for the loaded state at all and would instead be left holding whatever it
+    // captured while settings was still null.
+    val canMonitor = settings?.canMonitor
     LaunchedEffect(settings?.watchedDirPath, canMonitor) {
-        // Skipped until DataStore's first emission: canMonitor reads false
-        // while settings is still null, and stopping on that would take down a
-        // monitor that is already running (this effect runs again from scratch
-        // after every configuration change).
-        if (settings == null) return@LaunchedEffect
-        if (canMonitor) {
-            DirectoryMonitorService.start(context)
-        } else {
+        when (canMonitor) {
+            // Not loaded yet. Stopping on this would take down a monitor that
+            // is already running — this effect runs again from scratch after
+            // every configuration change.
+            null -> Unit
+            true -> DirectoryMonitorService.start(context)
             // The service stops itself once it notices, but only when it next
             // reconciles or picks up a file — clearing the API key would
             // otherwise leave its "Watching…" notification up indefinitely.
-            DirectoryMonitorService.stop(context)
+            false -> DirectoryMonitorService.stop(context)
         }
     }
 
