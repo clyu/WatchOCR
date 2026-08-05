@@ -231,23 +231,22 @@ object GeminiClient {
 
     /**
      * Pulls the human-readable `error.message` out of an API error body, falling
-     * back to the raw body and then — for the 5xx responses that carry no body
-     * at all — to a fixed phrase, so the caller's "HTTP 500: …" never trails
-     * off after the colon.
+     * back to the raw body when there is none, and then — for the 5xx responses
+     * that carry no body at all — to a fixed phrase, so the caller's
+     * "HTTP 500: …" never trails off after the colon.
      *
      * The length cap applies to whichever of the two details is chosen, not
      * just to the raw-body fallback: `error.message` is API-supplied too, and
      * nothing bounds what a gateway or proxy in front of the API may put there.
      */
-    private fun extractApiError(body: String): String =
-        (extractErrorMessage(body) ?: body.trim())
+    private fun extractApiError(body: String): String {
+        val message = try {
+            JSONObject(body).optJSONObject("error")?.optStringOrNull("message")?.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            null // not JSON at all — a proxy's HTML error page, say
+        }
+        return (message ?: body.trim())
             .take(MAX_ERROR_DETAIL_CHARS)
             .ifBlank { "no details in the response body" }
-
-    /** The body's `error.message`, or null when it is absent, blank or unparseable. */
-    private fun extractErrorMessage(body: String): String? = try {
-        JSONObject(body).optJSONObject("error")?.optStringOrNull("message")?.takeIf { it.isNotBlank() }
-    } catch (e: Exception) {
-        null
     }
 }
