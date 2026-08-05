@@ -41,6 +41,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -94,11 +95,11 @@ private val mediaImagesRequest: Array<String>
 private const val RETENTION_NEVER_LABEL = "Never"
 
 /**
- * Edits to the API key field are coalesced over this window before being
+ * Edits to a settings text field are coalesced over this window before being
  * persisted. Long enough to swallow a burst of keystrokes, short enough that the
  * flush on the way out of the screen is the exception rather than the rule.
  */
-private const val API_KEY_WRITE_DEBOUNCE_MS = 400L
+private const val SETTINGS_WRITE_DEBOUNCE_MS = 400L
 
 /** Auto-delete choices: days to keep OCR results -> menu label, 0 = keep forever. */
 private val retentionLabels = mapOf(
@@ -128,6 +129,59 @@ private fun SettingsSection(
     content()
 }
 
+/**
+ * Persists edits to one settings text field through [write], coalesced over
+ * [SETTINGS_WRITE_DEBOUNCE_MS] rather than issued per keystroke: every DataStore
+ * edit is a read-modify-write and an fsync of the whole preferences file, so
+ * typing a value out by hand would otherwise mean one of those per character.
+ * Pasting — how most API keys arrive — is a single change either way.
+ *
+ * The write carrying the last edit can still be owed when the screen leaves
+ * composition (a tab switch, a rotation), and it has to happen anyway: the
+ * fields re-seed from the stored settings on the way back in, so an edit that
+ * never reached DataStore does not merely fail to persist, it silently reverts
+ * what the user just typed. That is the guarantee SettingsDataStore's
+ * NonCancellable writes exist for, and the flush below is what keeps a debounce
+ * from weakening it.
+ *
+ * The flush cannot run on the caller's rememberCoroutineScope, which is
+ * cancelled at precisely the moment it is needed — a launch into a cancelled
+ * scope never runs — so it gets one of its own that is deliberately never
+ * cancelled. All that scope ever holds is a single-key DataStore write, which is
+ * NonCancellable and completes on its own.
+ *
+ * [stored] is what DataStore already holds, so leaving a field nobody touched
+ * writes nothing.
+ */
+@Composable
+private fun PersistDebounced(value: String, stored: String, write: suspend (String) -> Unit) {
+    // rememberUpdatedState throughout: the two effects below are keyed on Unit so
+    // that a recomposition does not restart the debounce mid-edit, which leaves
+    // them holding the arguments of the composition that created them.
+    val currentValue = rememberUpdatedState(value)
+    val currentStored = rememberUpdatedState(stored)
+    val currentWrite = rememberUpdatedState(write)
+
+    LaunchedEffect(Unit) {
+        snapshotFlow { currentValue.value }
+            .drop(1) // the value the field was seeded with is already stored
+            .collectLatest { edited ->
+                delay(SETTINGS_WRITE_DEBOUNCE_MS)
+                currentWrite.value(edited)
+            }
+    }
+
+    val flushScope = remember { CoroutineScope(Dispatchers.Main.immediate) }
+    DisposableEffect(Unit) {
+        onDispose {
+            val edited = currentValue.value
+            // Main.immediate, so this starts on the spot instead of waiting for a
+            // dispatch that the departing screen may not be around for.
+            if (edited != currentStored.value) flushScope.launch { currentWrite.value(edited) }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) {
@@ -151,43 +205,10 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
     var showClearConfirm by remember { mutableStateOf(false) }
     var retentionMenuExpanded by remember { mutableStateOf(false) }
 
-    // Coalesced rather than written per keystroke: every DataStore edit is a
-    // read-modify-write and an fsync of the whole preferences file, so typing a
-    // 39-character key out by hand would mean 39 of them. Pasting one — how most
-    // keys arrive — is a single change either way, and is persisted one debounce
-    // window later exactly as before.
-    LaunchedEffect(Unit) {
-        snapshotFlow { apiKey }
-            .drop(1) // the value the field was seeded with is already stored
-            .collectLatest { edited ->
-                delay(API_KEY_WRITE_DEBOUNCE_MS)
-                settingsDataStore.setApiKey(edited)
-            }
-    }
-
-    // The debounce above means the write carrying the last edit can still be
-    // owed when this screen leaves composition — a tab switch, a rotation. It
-    // has to happen anyway: the field re-seeds from [settings] on the way back
-    // in, so an edit that never reached DataStore does not merely fail to
-    // persist, it silently reverts what the user just typed. That is the same
-    // guarantee SettingsDataStore.persist's NonCancellable exists for.
-    //
-    // Which is why this cannot run on [scope]: rememberCoroutineScope's scope is
-    // cancelled at precisely the moment the flush is needed, and a launch into a
-    // cancelled scope never runs. The scope below is ours and is deliberately
-    // never cancelled; all it ever holds is one single-key DataStore write,
-    // which is NonCancellable and completes on its own.
-    val keyWriter = remember { CoroutineScope(Dispatchers.Main.immediate) }
-    DisposableEffect(Unit) {
-        onDispose {
-            val edited = apiKey
-            keyWriter.launch {
-                if (settingsDataStore.settingsFlow.first().apiKey != edited) {
-                    settingsDataStore.setApiKey(edited)
-                }
-            }
-        }
-    }
+    // Neither text field writes from its onValueChange; both go through this,
+    // which is also what makes the last edit land after the field is gone.
+    PersistDebounced(value = apiKey, stored = settings.apiKey) { settingsDataStore.setApiKey(it) }
+    PersistDebounced(value = model, stored = settings.model) { settingsDataStore.setModel(it) }
 
     fun openFolderPicker() {
         scope.launch {
@@ -261,10 +282,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
         SettingsSection("Gemini Model (OCR)") {
             OutlinedTextField(
                 value = model,
-                onValueChange = {
-                    model = it
-                    scope.launch { settingsDataStore.setModel(it) }
-                },
+                onValueChange = { model = it },
                 label = { Text("Model") },
                 singleLine = true,
                 modifier = Modifier
@@ -274,11 +292,11 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                     // nothing while requests kept using that default. Filling it
                     // back in on blur — not on every keystroke, which would make
                     // the field impossible to clear and retype — keeps what is
-                    // displayed equal to what is sent.
+                    // displayed equal to what is sent. Persisting it is the
+                    // debounced writer's job, same as any other edit.
                     .onFocusChanged { focusState ->
                         if (!focusState.isFocused && model.isBlank()) {
                             model = AppSettings.DEFAULT_MODEL
-                            scope.launch { settingsDataStore.setModel(AppSettings.DEFAULT_MODEL) }
                         }
                     }
             )
