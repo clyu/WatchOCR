@@ -303,21 +303,10 @@ class DirectoryMonitorService : Service() {
                     Log.w(LOG_TAG, "failed ${file.name}: ${failure.message}")
                     lastErrorText = "Failed to process ${file.name}: ${failure.describeForUser()}"
                 }
-                // Dedup every outcome that settles these bytes for good, which
-                // [isRetryable] already names: a success (null is not retryable,
-                // so this covers it) and a permanent failure — an invalid key,
-                // an image the API cannot read. A duplicate event carries the
-                // same bytes, so re-running one of those buys a second identical
-                // rejection at the price of another full retry cycle, and the
-                // 429 case makes that actively counterproductive.
-                //
-                // Transient failures stay out on purpose: there a duplicate
-                // event is a free extra attempt once the network recovers.
-                //
-                // Nothing needs to be held back for the two-pass writer that
-                // creates a file empty — that event never reaches here, having
-                // been dropped by the length check above.
-                if (!isRetryable(failure)) {
+                // Hold back only the outcomes that settle these bytes for good,
+                // so a duplicate event for the same path is dropped rather than
+                // re-run; [isSettled] spells out which those are.
+                if (isSettled(failure)) {
                     recentlyDone[file.path] = SystemClock.elapsedRealtime()
                 }
                 updateNotification(lastErrorText ?: idleText)
@@ -385,15 +374,18 @@ class DirectoryMonitorService : Service() {
     }
 
     /**
-     * 4xx responses are permanent (invalid API key: 400/403, unprocessable
-     * image: 400) — retrying them is pointless — except 408 (request timeout)
-     * and 429 (rate limited), which are transient like the 5xx range. So is a
-     * file deleted/renamed after its event (FileNotFoundException): it won't
-     * reappear, and if it does it fires a new event.
+     * Whether another attempt at the same file could plausibly do better. 4xx
+     * responses are permanent (invalid API key: 400/403, unprocessable image:
+     * 400) — retrying them is pointless — except 408 (request timeout) and 429
+     * (rate limited), which are transient like the 5xx range. A file that was
+     * already gone when it was read (FileNotFoundException) is permanent too:
+     * reading the same missing path again immediately reads nothing.
      *
-     * [e] is nullable for the dedup call in [monitorLoop], which passes the
-     * absence of a failure and relies on getting false back — narrowing the
-     * parameter would make a success stop being deduped.
+     * Answers that question only, not "is this file finished with" — see
+     * [isSettled], which the two disagree on.
+     *
+     * [e] is nullable because both callers take theirs from
+     * `Result.exceptionOrNull()`; a success is not retryable.
      */
     private fun isRetryable(e: Throwable?): Boolean = when (e) {
         is FileNotFoundException -> false
@@ -401,6 +393,34 @@ class DirectoryMonitorService : Service() {
         is ApiHttpException -> e.code == 408 || e.code == 429 || e.code in 500..599
         else -> false
     }
+
+    /**
+     * Whether [failure] (null for a success) settles this path's bytes for good,
+     * so a duplicate event for it inside [DEDUP_WINDOW_MS] announces nothing new
+     * — the case the dedup window exists for, some camera apps closing a file
+     * and reopening it to write EXIF.
+     *
+     * A success settles it, and so do the permanent failures [isRetryable] rules
+     * out: an invalid key, an image the API cannot read. A duplicate event
+     * carries the same bytes, so re-running one of those buys a second identical
+     * rejection at the price of another full retry cycle, and the 429 case makes
+     * that actively counterproductive. Transient failures settle nothing — there
+     * a duplicate event is a free extra attempt once the network recovers.
+     *
+     * FileNotFoundException is the one permanent failure that settles nothing
+     * either, and the reason this is not simply `!isRetryable`: no bytes were
+     * ever read, so there is no outcome to reuse. It is permanent only in that
+     * re-reading a path that is currently missing is pointless; a path that
+     * comes back — a `.trashed-`/`.pending-` rename round-trip, a writer that
+     * unlinked and recreated the file — comes back with different bytes, and the
+     * event announcing them has to get through.
+     *
+     * Nothing needs to be held back for the two-pass writer that creates a file
+     * empty: that event never reaches here, having been dropped by
+     * [monitorLoop]'s length check.
+     */
+    private fun isSettled(failure: Throwable?): Boolean =
+        !isRetryable(failure) && failure !is FileNotFoundException
 
     /**
      * Long-running service: enforces the history retention setting periodically,
