@@ -152,8 +152,6 @@ object OcrProcessor {
                 val imagesDir = File(context.filesDir, "images").apply { mkdirs() }
                 val extension = extensionForMime(mimeType)
                 val imageFile = File(imagesDir, "${UUID.randomUUID()}.$extension")
-                imageFile.writeBytes(bytes)
-
                 val record = OcrRecord(
                     imagePath = imageFile.absolutePath,
                     ocrText = geminiResult.ocr,
@@ -161,14 +159,20 @@ object OcrProcessor {
                     analysis = geminiResult.analysis
                 )
 
+                // Both steps under one cleanup, because the file only stops being
+                // this block's problem once a row points at it: HistoryCleanup
+                // deletes images by walking the rows, so anything left here — the
+                // half-written file a failed write leaves behind (a full disk), or
+                // the complete one a failed insert strands — would sit in app
+                // storage forever with nothing to find it by.
+                //
+                // Throwable, not Exception, so an OutOfMemoryError or a
+                // cancellation delivered by insert() is covered too; delete() is
+                // not a suspension point, so it still runs on that path.
                 val id = try {
+                    imageFile.writeBytes(bytes)
                     AppDatabase.getInstance(context).ocrRecordDao().insert(record)
                 } catch (e: Throwable) {
-                    // The record never made it into the database, so nothing would
-                    // ever clean up the image copy — remove it here. Throwable, not
-                    // Exception: HistoryCleanup only deletes files a row points at,
-                    // so a file orphaned by an OutOfMemoryError (or by cancellation)
-                    // would sit in app storage forever.
                     imageFile.delete()
                     throw e
                 }
