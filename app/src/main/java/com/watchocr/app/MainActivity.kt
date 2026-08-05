@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchocr.app.data.HistoryCleanup
@@ -121,11 +122,25 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     // for the loaded state at all and would instead be left holding whatever it
     // captured while settings was still null.
     val canMonitor = settings?.canMonitor
-    LaunchedEffect(settings?.watchedDirPath, canMonitor) {
+    // Re-run on every resume, not only when a key changes: the service stops
+    // itself on conditions nothing here can predict (an unexpected failure, the
+    // watched folder disappearing), and the alerts it leaves behind tell the
+    // user to reopen WatchOCR. Reopening changes no key — the alert's intent
+    // deliberately brings the existing activity forward rather than recreating
+    // it (see DirectoryMonitorService.contentIntent), and a returning app
+    // re-collects settings to the same value — so a plain LaunchedEffect keyed
+    // on settings would only ever recover the cases that happened to destroy
+    // the activity, and the instruction would be a dead end for the rest.
+    //
+    // Resume rather than start, so that tapping an alert from the notification
+    // shade counts too (expanding it pauses without stopping), and so the
+    // foreground-service start always happens from an unambiguously foreground
+    // state.
+    LifecycleResumeEffect(settings?.watchedDirPath, canMonitor) {
         when (canMonitor) {
             // Not loaded yet. Stopping on this would take down a monitor that
-            // is already running — this effect runs again from scratch after
-            // every configuration change.
+            // is already running — this effect runs again from scratch on every
+            // resume and after every configuration change.
             null -> Unit
             true -> DirectoryMonitorService.start(context)
             // The service stops itself once it notices, but only when it next
@@ -133,6 +148,10 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
             // otherwise leave its "Watching…" notification up indefinitely.
             false -> DirectoryMonitorService.stop(context)
         }
+        // Nothing to undo on the way out: monitoring is meant to outlive the UI,
+        // and the one stop that does follow the app's lifecycle is the deliberate
+        // one in DirectoryMonitorService.onTaskRemoved.
+        onPauseOrDispose {}
     }
 
     LaunchedEffect(settings?.retentionDays) {
