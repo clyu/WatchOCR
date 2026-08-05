@@ -115,7 +115,16 @@ class DirectoryMonitorService : Service() {
     @Volatile
     private var watchingDirPath: String? = null
 
-    /** Strong reference: a GC'd FileObserver silently stops watching. */
+    /**
+     * Strong reference: a GC'd FileObserver silently stops watching.
+     *
+     * Volatile because [monitorLoop] starts and stops it on [serviceScope] while
+     * [onDestroy] stops it on the main thread, with no join or lock between the
+     * two to publish either write. Without it the loop's stop could read
+     * [onDestroy]'s null, skip the stop, and leave a live inotify watch feeding a
+     * channel nobody reads — until the GC got around to finalizing it.
+     */
+    @Volatile
     private var fileObserver: FileObserver? = null
 
     /**
@@ -173,8 +182,10 @@ class DirectoryMonitorService : Service() {
     }
 
     override fun onDestroy() {
-        fileObserver?.stopWatching()
-        fileObserver = null
+        // Before the cancel, not after: cancelling only schedules [monitorLoop]'s
+        // finally to run, so waiting on it to stop the watch would leave one live
+        // for as long as the loop takes to resume.
+        stopObserver()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -322,8 +333,7 @@ class DirectoryMonitorService : Service() {
             // behind a notification still claiming otherwise. Cleared here
             // rather than at each `return` so cancellation is covered too.
             watchingDirPath = null
-            fileObserver?.stopWatching()
-            fileObserver = null
+            stopObserver()
         }
     }
 
@@ -354,6 +364,22 @@ class DirectoryMonitorService : Service() {
                 events.trySend(WatchEvent.NewFile(File(dirPath, path)))
             }
         }.also { it.startWatching() }
+    }
+
+    /**
+     * Counterpart to [startObserver], called from [monitorLoop]'s finally (on
+     * [serviceScope]) and from [onDestroy] (on the main thread) — whichever gets
+     * there first, with the other then finding null and doing nothing.
+     *
+     * The read and the write are not one atomic step, and do not need to be: the
+     * worst a lost race costs is a second stopWatching() on an observer that has
+     * already been stopped, which FileObserver guards against internally. What
+     * the two threads do need is to see each other's writes at all, which is what
+     * [fileObserver]'s @Volatile is for.
+     */
+    private fun stopObserver() {
+        fileObserver?.stopWatching()
+        fileObserver = null
     }
 
     // Wrapped in OcrProcessor.withActiveJob by the caller so the progress
