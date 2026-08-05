@@ -109,10 +109,11 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
         }
     }
 
-    // Keyed on canMonitor (does a key exist), not the key's text: every
-    // keystroke in the API key field writes to DataStore, and start() is
-    // idempotent but not free — no point invoking startForegroundService per
-    // keystroke. The path stays a key so switching folders restarts the loop.
+    // Keyed on canMonitor (does a key exist), not the key's text: revising an
+    // already-set key changes nothing this effect decides, and start() is
+    // idempotent but not free — no point invoking startForegroundService for
+    // each revision. The monitor re-reads the key per file regardless. The path
+    // stays a key so switching folders restarts the loop.
     //
     // Left nullable rather than flattened with `== true`, so "DataStore has not
     // emitted yet" is a key value of its own and the decision below can be read

@@ -35,12 +35,15 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
@@ -55,7 +58,11 @@ import com.watchocr.app.data.ImageBucket
 import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.service.DirectoryMonitorService
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -85,6 +92,13 @@ private val mediaImagesRequest: Array<String>
 
 /** Shown for "keep forever" (0) and for any persisted value outside the offered choices. */
 private const val RETENTION_NEVER_LABEL = "Never"
+
+/**
+ * Edits to the API key field are coalesced over this window before being
+ * persisted. Long enough to swallow a burst of keystrokes, short enough that the
+ * flush on the way out of the screen is the exception rather than the rule.
+ */
+private const val API_KEY_WRITE_DEBOUNCE_MS = 400L
 
 /** Auto-delete choices: days to keep OCR results -> menu label, 0 = keep forever. */
 private val retentionLabels = mapOf(
@@ -137,6 +151,44 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
     var showClearConfirm by remember { mutableStateOf(false) }
     var retentionMenuExpanded by remember { mutableStateOf(false) }
 
+    // Coalesced rather than written per keystroke: every DataStore edit is a
+    // read-modify-write and an fsync of the whole preferences file, so typing a
+    // 39-character key out by hand would mean 39 of them. Pasting one — how most
+    // keys arrive — is a single change either way, and is persisted one debounce
+    // window later exactly as before.
+    LaunchedEffect(Unit) {
+        snapshotFlow { apiKey }
+            .drop(1) // the value the field was seeded with is already stored
+            .collectLatest { edited ->
+                delay(API_KEY_WRITE_DEBOUNCE_MS)
+                settingsDataStore.setApiKey(edited)
+            }
+    }
+
+    // The debounce above means the write carrying the last edit can still be
+    // owed when this screen leaves composition — a tab switch, a rotation. It
+    // has to happen anyway: the field re-seeds from [settings] on the way back
+    // in, so an edit that never reached DataStore does not merely fail to
+    // persist, it silently reverts what the user just typed. That is the same
+    // guarantee SettingsDataStore.persist's NonCancellable exists for.
+    //
+    // Which is why this cannot run on [scope]: rememberCoroutineScope's scope is
+    // cancelled at precisely the moment the flush is needed, and a launch into a
+    // cancelled scope never runs. The scope below is ours and is deliberately
+    // never cancelled; all it ever holds is one single-key DataStore write,
+    // which is NonCancellable and completes on its own.
+    val keyWriter = remember { CoroutineScope(Dispatchers.Main.immediate) }
+    DisposableEffect(Unit) {
+        onDispose {
+            val edited = apiKey
+            keyWriter.launch {
+                if (settingsDataStore.settingsFlow.first().apiKey != edited) {
+                    settingsDataStore.setApiKey(edited)
+                }
+            }
+        }
+    }
+
     fun openFolderPicker() {
         scope.launch {
             pickerBuckets = withContext(Dispatchers.IO) { MediaStoreImages.queryBuckets(context) }
@@ -183,11 +235,9 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
 
         SettingsSection("Gemini API Key") {
             OutlinedTextField(
+                // Persisted by the debounced writer above, not from here.
                 value = apiKey,
-                onValueChange = {
-                    apiKey = it
-                    scope.launch { settingsDataStore.setApiKey(it) }
-                },
+                onValueChange = { apiKey = it },
                 label = { Text("API Key") },
                 singleLine = true,
                 // Password keyboard: keeps the IME from learning the key and
