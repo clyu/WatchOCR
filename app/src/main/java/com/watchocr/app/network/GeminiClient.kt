@@ -187,19 +187,23 @@ object GeminiClient {
         val parts = candidate.optJSONObject("content")?.optJSONArray("parts")
             ?: throw Exception(noTextMessage(finishReason))
 
-        // optJSONObject, not getJSONObject: a part that is not an object at all
-        // is skipped like any other part without usable text, so the failure
-        // surfaces as noTextMessage() below rather than as a raw JSONException
-        // whose message ("Value … cannot be converted to JSONObject") would end
-        // up verbatim in a snackbar.
+        // The opt* accessors throughout, never the get* pair: a part that is not
+        // an object at all, or whose `text` is an object or an array rather than
+        // a string, is skipped like any other part without usable text, so the
+        // failure surfaces as noTextMessage() below rather than as a raw
+        // JSONException whose message ("Value … cannot be converted to …") would
+        // end up verbatim in a snackbar.
+        //
+        // Selected on the text itself rather than on the presence of a `text`
+        // key, so that a leading part carrying "text": "" is passed over instead
+        // of being taken for the answer and failing the whole response — the part
+        // that actually holds it comes after.
         val rawText = (0 until parts.length()).asSequence()
             .mapNotNull { parts.optJSONObject(it) }
-            .firstOrNull { it.has("text") && !it.isNull("text") && !it.optBoolean("thought", false) }
-            ?.getString("text")
-
-        if (rawText.isNullOrEmpty()) {
-            throw Exception(noTextMessage(finishReason))
-        }
+            .filterNot { it.optBoolean("thought", false) }
+            .mapNotNull { it.optStringOrNull("text") }
+            .firstOrNull()
+            ?: throw Exception(noTextMessage(finishReason))
 
         // The request forces structured output (responseMimeType + responseSchema),
         // so the text part is plain JSON — no Markdown fences to strip.
