@@ -12,6 +12,7 @@ import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.network.GeminiClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -166,15 +167,26 @@ object OcrProcessor {
                 // the complete one a failed insert strands — would sit in app
                 // storage forever with nothing to find it by.
                 //
-                // Throwable, not Exception, so an OutOfMemoryError or a
-                // cancellation delivered by insert() is covered too; delete() is
-                // not a suspension point, so it still runs on that path.
-                val id = try {
-                    imageFile.writeBytes(bytes)
-                    AppDatabase.getInstance(context).ocrRecordDao().insert(record)
-                } catch (e: Throwable) {
-                    imageFile.delete()
-                    throw e
+                // NonCancellable so a cancellation cannot split the pair the other
+                // way: insert() is a suspension point, and a cancelled withContext
+                // reports CancellationException even when its block already ran to
+                // the end. Without it a folder switch — which cancel-and-joins the
+                // monitor mid-file — could commit the row and then have the catch
+                // below delete the image it points at, which is exactly the outcome
+                // HistoryCleanup calls out as unrecoverable: a permanently broken
+                // thumbnail nothing ever repairs. One file write and one insert, so
+                // nothing waits on it for long.
+                //
+                // Throwable, not Exception, so an OutOfMemoryError is covered too;
+                // delete() is not a suspension point, so it still runs on that path.
+                val id = withContext(NonCancellable) {
+                    try {
+                        imageFile.writeBytes(bytes)
+                        AppDatabase.getInstance(context).ocrRecordDao().insert(record)
+                    } catch (e: Throwable) {
+                        imageFile.delete()
+                        throw e
+                    }
                 }
 
                 // insert() returns the generated rowid; carrying it back keeps the
