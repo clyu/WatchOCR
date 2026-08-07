@@ -380,21 +380,14 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                                     .fillMaxWidth()
                                     .clickable {
                                         scope.launch {
-                                            val dirPath = withContext(Dispatchers.IO) {
-                                                MediaStoreImages.queryBucketPath(context, bucket.id)
-                                            }
-                                            if (dirPath == null) {
-                                                toast("Couldn't determine this folder's path; choose another folder.")
-                                            } else {
-                                                settingsDataStore.setWatchedBucket(bucket.name, dirPath)
-                                                // Revives a self-stopped service even when the
-                                                // re-selected folder is the one it was already
-                                                // configured for — MainActivity's LaunchedEffect
-                                                // key doesn't change then. start() is idempotent,
-                                                // so a running service is unaffected.
-                                                if (settingsDataStore.settingsFlow.first().canMonitor) {
-                                                    DirectoryMonitorService.start(context)
-                                                }
+                                            settingsDataStore.setWatchedBucket(bucket.name, bucket.path)
+                                            // Revives a self-stopped service even when the
+                                            // re-selected folder is the one it was already
+                                            // configured for — MainActivity's LaunchedEffect
+                                            // key doesn't change then. start() is idempotent,
+                                            // so a running service is unaffected.
+                                            if (settingsDataStore.settingsFlow.first().canMonitor) {
+                                                DirectoryMonitorService.start(context)
                                             }
                                             pickerBuckets = null
                                         }
