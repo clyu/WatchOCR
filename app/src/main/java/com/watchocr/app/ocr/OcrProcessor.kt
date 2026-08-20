@@ -8,6 +8,7 @@ import android.media.ExifInterface
 import android.net.Uri
 import android.util.Base64
 import com.watchocr.app.data.AppDatabase
+import com.watchocr.app.data.OcrImages
 import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.network.GeminiClient
 import kotlinx.coroutines.CancellationException
@@ -150,7 +151,7 @@ object OcrProcessor {
                 // Throws on failure; the catch below turns that into this Result.
                 val geminiResult = GeminiClient.ocrAndTranslate(apiKey, model, base64Data, mimeType)
 
-                val imagesDir = File(context.filesDir, "images").apply { mkdirs() }
+                val imagesDir = OcrImages.dir(context).apply { mkdirs() }
                 val extension = extensionForMime(mimeType)
                 val imageFile = File(imagesDir, "${UUID.randomUUID()}.$extension")
                 val record = OcrRecord(

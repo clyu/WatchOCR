@@ -14,6 +14,20 @@ import java.util.concurrent.TimeUnit
 object HistoryCleanup {
 
     /**
+     * How long a stored image is left alone before [clearAll]'s orphan sweep
+     * will consider it.
+     *
+     * An image being written right now belongs to an OcrProcessor run whose row
+     * does not exist yet, so deleting it would produce exactly the broken
+     * thumbnail [deleteBefore] orders its two deletes to avoid — and the sweep
+     * cannot tell one from an orphan by looking at the directory. Age tells them
+     * apart instead: an in-flight image is seconds old, while an orphan is at
+     * least as old as the interrupted sweep that stranded it, which puts it far
+     * outside this window.
+     */
+    private val ORPHAN_GRACE_MILLIS = TimeUnit.HOURS.toMillis(1)
+
+    /**
      * Deletes records older than [retentionDays] days. A retention of 0 (or
      * less) means "keep forever" and is a no-op.
      */
@@ -50,9 +64,20 @@ object HistoryCleanup {
         }
     }
 
-    /** Deletes all history records and their images. */
+    /**
+     * Deletes all history records and their images, then reclaims any stored
+     * image no row points at any more.
+     *
+     * This is the one moment when sweeping the image directory is safe to
+     * reason about: every row is going, so nothing found there can still be
+     * referenced by one that stays. It is also the only thing that ever
+     * reclaims the orphans [deleteBefore] accepts leaving behind — a file whose
+     * row was deleted before the process was killed, or one delete() refused —
+     * which otherwise sit in app storage for the life of the install.
+     */
     suspend fun clearAll(context: Context) {
         deleteBefore(context, Long.MAX_VALUE)
+        deleteOrphanImages(context)
     }
 
     // Main-safe: the image files are deleted off the main thread (Room's
@@ -82,5 +107,21 @@ object HistoryCleanup {
             expired.map { it.id }.chunked(500).forEach { dao.deleteByIds(it) }
             expired.forEach { File(it.imagePath).delete() }
         }
+    }
+
+    /**
+     * Deletes stored images older than [ORPHAN_GRACE_MILLIS], called only from
+     * [clearAll], where the rows that could have named them are already gone.
+     *
+     * Not NonCancellable, unlike [deleteBefore]: there is no row/file pair to
+     * keep in step here, so an interrupted sweep leaves nothing half-applied —
+     * just a few orphans for the next [clearAll] to find. Worth staying
+     * cancellable for, too, since what it walks is a whole directory rather than
+     * one bounded batch of expired rows.
+     */
+    private suspend fun deleteOrphanImages(context: Context) = withContext(Dispatchers.IO) {
+        val cutoffMillis = System.currentTimeMillis() - ORPHAN_GRACE_MILLIS
+        val files = OcrImages.dir(context).listFiles() ?: return@withContext
+        files.forEach { if (it.lastModified() < cutoffMillis) it.delete() }
     }
 }
