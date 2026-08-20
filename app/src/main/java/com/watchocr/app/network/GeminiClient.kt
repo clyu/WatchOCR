@@ -174,15 +174,19 @@ object GeminiClient {
 
     private fun parseResponse(body: String): GeminiOcrResult {
         val root = JSONObject(body)
-        val candidates = root.optJSONArray("candidates")
-        if (candidates == null || candidates.length() == 0) {
+        // optJSONObject rather than getJSONObject, for the reason spelled out
+        // over the parts below: a first candidate that is not an object at all
+        // would otherwise throw a raw JSONException straight into a snackbar.
+        // It also folds "no candidates key", "the array is empty" and "the first
+        // entry is unusable" into the one null this branch already answers.
+        val candidate = root.optJSONArray("candidates")?.optJSONObject(0)
+        if (candidate == null) {
             val blockReason = root.optJSONObject("promptFeedback")?.optStringOrNull("blockReason").orEmpty()
             throw Exception(
                 if (blockReason.isNotEmpty()) "Request was blocked by the API (reason: $blockReason)."
-                else "API response contained no candidates."
+                else "API response contained no usable candidate."
             )
         }
-        val candidate = candidates.getJSONObject(0)
         val finishReason = candidate.optStringOrNull("finishReason").orEmpty()
         val parts = candidate.optJSONObject("content")?.optJSONArray("parts")
             ?: throw Exception(noTextMessage(finishReason))
