@@ -42,7 +42,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
@@ -53,6 +52,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchocr.app.data.AppSettings
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.ImageBucket
@@ -138,11 +138,10 @@ private fun SettingsSection(
  *
  * The write carrying the last edit can still be owed when the screen leaves
  * composition (a tab switch, a rotation), and it has to happen anyway: the
- * fields re-seed from the stored settings on the way back in, so an edit that
- * never reached DataStore does not merely fail to persist, it silently reverts
- * what the user just typed. That is the guarantee SettingsDataStore's
- * NonCancellable writes exist for, and the flush below is what keeps a debounce
- * from weakening it.
+ * draft in SettingsDraftViewModel outlives the composition but not the process,
+ * so an edit that never reached DataStore is gone the moment the app is. That
+ * is the guarantee SettingsDataStore's NonCancellable writes exist for, and the
+ * flush below is what keeps a debounce from weakening it.
  *
  * The flush cannot run on the caller's rememberCoroutineScope, which is
  * cancelled at precisely the moment it is needed — a launch into a cancelled
@@ -164,7 +163,10 @@ private fun PersistDebounced(value: String, stored: String, write: suspend (Stri
 
     LaunchedEffect(Unit) {
         snapshotFlow { currentValue.value }
-            .drop(1) // the value the field was seeded with is already stored
+            // The value the field opens with is never an edit to persist: it is
+            // either what DataStore already holds, or a draft whose write the
+            // departing composition's flush already owns.
+            .drop(1)
             .collectLatest { edited ->
                 delay(SETTINGS_WRITE_DEBOUNCE_MS)
                 currentWrite.value(edited)
@@ -184,20 +186,21 @@ private fun PersistDebounced(value: String, stored: String, write: suspend (Stri
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) {
+fun SettingsScreen(
+    settingsDataStore: SettingsDataStore,
+    settings: AppSettings,
+    draft: SettingsDraftViewModel = viewModel()
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    // The text fields own their state, seeded exactly once from [settings],
-    // which the caller guarantees is already loaded (this screen is not
-    // composed before DataStore's first emission). Keying remember on the
-    // round-tripped settings value would let a stale DataStore emission reset
-    // the field mid-typing and drop keystrokes.
-    // remember, not rememberSaveable: the key must not land in the saved
-    // instance state Bundle in plain text. Re-seeding from [settings] after a
-    // configuration change is equivalent anyway, since every edit is persisted.
-    var apiKey by remember { mutableStateOf(settings.apiKey) }
-    var model by rememberSaveable { mutableStateOf(settings.model) }
+    // Each field shows the user's own edit once there is one, and the stored
+    // value until then. The edits live in [draft] rather than in composition
+    // state precisely so that leaving and re-entering this screen never re-reads
+    // them from DataStore — [SettingsDraftViewModel] spells out what that race
+    // costs. [settings] is already loaded, the caller guarantees it.
+    val apiKey = draft.apiKey ?: settings.apiKey
+    val model = draft.model ?: settings.model
     var apiKeyVisible by remember { mutableStateOf(false) }
 
     // Non-null while the folder picker dialog is showing.
@@ -258,7 +261,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
             OutlinedTextField(
                 // Persisted by the debounced writer above, not from here.
                 value = apiKey,
-                onValueChange = { apiKey = it },
+                onValueChange = { draft.apiKey = it },
                 label = { Text("API Key") },
                 singleLine = true,
                 // Password keyboard: keeps the IME from learning the key and
@@ -282,7 +285,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
         SettingsSection("Gemini Model (OCR)") {
             OutlinedTextField(
                 value = model,
-                onValueChange = { model = it },
+                onValueChange = { draft.model = it },
                 label = { Text("Model") },
                 singleLine = true,
                 modifier = Modifier
@@ -296,7 +299,7 @@ fun SettingsScreen(settingsDataStore: SettingsDataStore, settings: AppSettings) 
                     // debounced writer's job, same as any other edit.
                     .onFocusChanged { focusState ->
                         if (!focusState.isFocused && model.isBlank()) {
-                            model = AppSettings.DEFAULT_MODEL
+                            draft.model = AppSettings.DEFAULT_MODEL
                         }
                     }
             )
