@@ -3,6 +3,7 @@ package com.watchocr.app.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -53,12 +54,14 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.watchocr.app.LOG_TAG
 import com.watchocr.app.data.AppSettings
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.ImageBucket
 import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.service.DirectoryMonitorService
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -130,6 +133,36 @@ private fun SettingsSection(
 }
 
 /**
+ * Runs [write] with a failed DataStore edit (a full disk, an unreadable
+ * preferences file) reduced to a log line.
+ *
+ * Neither of [PersistDebounced]'s two call sites can afford to let one escape.
+ * Out of the debounce it reaches the recomposer and takes the app down. Out of
+ * the flush it lands on a scope that has no handler and that nothing ever
+ * joins, so it reaches the thread's default handler and does the same — from a
+ * screen the user has already left, which surfaces as a crash on the way out of
+ * Settings.
+ *
+ * Losing the edit is then the honest outcome, and unlike HistoryCleanup's quiet
+ * sweep there is no next attempt already scheduled to recover it: the field that
+ * produced the edit is gone by the time the flush runs, so there is nowhere left
+ * to report the failure and nothing left to retry from. The next edit writes
+ * again from scratch.
+ *
+ * Cancellation is rethrown — that is the debounce being superseded by a newer
+ * keystroke, not a failed write.
+ */
+private suspend fun writeQuietly(write: suspend (String) -> Unit, value: String) {
+    try {
+        write(value)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Log.w(LOG_TAG, "settings write failed, edit not persisted", e)
+    }
+}
+
+/**
  * Persists edits to one settings text field through [write], coalesced over
  * [SETTINGS_WRITE_DEBOUNCE_MS] rather than issued per keystroke: every DataStore
  * edit is a read-modify-write and an fsync of the whole preferences file, so
@@ -147,7 +180,10 @@ private fun SettingsSection(
  * cancelled at precisely the moment it is needed — a launch into a cancelled
  * scope never runs — so it gets one of its own that is deliberately never
  * cancelled. All that scope ever holds is a single-key DataStore write, which is
- * NonCancellable and completes on its own.
+ * NonCancellable and completes on its own. Never being cancelled also means
+ * nothing ever joins it, so a failure it carried would go straight to the
+ * thread's default handler: what is launched there has to be [writeQuietly],
+ * never a raw write.
  *
  * [stored] is what DataStore already holds, so leaving a field nobody touched
  * writes nothing.
@@ -169,7 +205,7 @@ private fun PersistDebounced(value: String, stored: String, write: suspend (Stri
             .drop(1)
             .collectLatest { edited ->
                 delay(SETTINGS_WRITE_DEBOUNCE_MS)
-                currentWrite.value(edited)
+                writeQuietly(currentWrite.value, edited)
             }
     }
 
@@ -177,9 +213,10 @@ private fun PersistDebounced(value: String, stored: String, write: suspend (Stri
     DisposableEffect(Unit) {
         onDispose {
             val edited = currentValue.value
-            // Main.immediate, so this starts on the spot instead of waiting for a
-            // dispatch that the departing screen may not be around for.
-            if (edited != currentStored.value) flushScope.launch { currentWrite.value(edited) }
+            if (edited == currentStored.value) return@onDispose
+            // Main.immediate, so this starts on the spot instead of waiting for
+            // a dispatch that the departing screen may not be around for.
+            flushScope.launch { writeQuietly(currentWrite.value, edited) }
         }
     }
 }
