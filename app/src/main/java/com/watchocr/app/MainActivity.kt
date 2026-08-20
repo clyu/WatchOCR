@@ -40,6 +40,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +87,10 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     val snackbarHostState = remember { SnackbarHostState() }
 
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+    // Switching tabs disposes the outgoing one outright, so without somewhere to
+    // park it its rememberSaveable state goes with it. Holds each tab's across
+    // the switch; it is itself saveable, so a rotation keeps them too.
+    val tabStateHolder = rememberSaveableStateHolder()
     // Manual imports and the directory-monitor service both run OCR through
     // OcrProcessor, which counts every in-flight job — the single source for
     // the FAB spinner.
@@ -193,10 +198,23 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     ) { padding ->
         Row(modifier = Modifier.padding(padding).fillMaxSize()) {
             Box(modifier = Modifier.weight(1f)) {
+                // Keyed on the tab, so leaving one saves its saveable state and
+                // returning restores it — History's scroll position, and the
+                // last-seen top record it decides auto-scrolls from. Without it
+                // the branch below discards both, and every return to History
+                // would read as a first load and jump to the top.
+                tabStateHolder.SaveableStateProvider(selectedTab) {
+                    if (selectedTab == 0) {
+                        HistoryScreen()
+                    } else {
+                        settings?.let { SettingsScreen(settingsDataStore = settingsDataStore, settings = it) }
+                    }
+                }
+                // After the tab content so the Box draws the manual-import FAB
+                // over it; it belongs to the History tab alone. Outside the
+                // provider because align() needs this Box's scope, and the FAB
+                // has no state to carry across a switch anyway.
                 if (selectedTab == 0) {
-                    HistoryScreen()
-                    // After HistoryScreen so the Box draws the manual-import FAB
-                    // over it; it belongs to the History tab alone.
                     FloatingActionButton(
                         onClick = { pickImageLauncher.launch(arrayOf("image/*")) },
                         modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
@@ -210,8 +228,6 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
                             Icon(Icons.Default.Add, contentDescription = "Add image")
                         }
                     }
-                } else {
-                    settings?.let { SettingsScreen(settingsDataStore = settingsDataStore, settings = it) }
                 }
             }
             if (isLandscape) {

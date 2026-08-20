@@ -69,9 +69,12 @@ fun HistoryScreen() {
     // depend on which state the screen is in: an empty (or not-yet-loaded)
     // history must not silently discard the scroll position and reset it.
     val listState = rememberLazyListState()
-    // Saveable so a configuration change (screen rotation) restores it along
-    // with listState's scroll position: the top id is then unchanged, no
-    // scroll happens, and the restored position survives.
+    // Saveable so it comes back alongside listState's scroll position: by
+    // rememberSaveable itself across a configuration change, and via
+    // MainActivity's SaveableStateHolder across a tab switch, which disposes
+    // this screen outright. Either way the top id is then unchanged, no scroll
+    // happens, and the restored position survives — while a record that really
+    // did arrive in the meantime still reads as new and still scrolls into view.
     var lastTopId by rememberSaveable { mutableStateOf<Long?>(null) }
 
     // Records are ordered newest-first; whenever a new record becomes the top
