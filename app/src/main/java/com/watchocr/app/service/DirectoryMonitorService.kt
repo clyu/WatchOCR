@@ -128,13 +128,6 @@ class DirectoryMonitorService : Service() {
     private var fileObserver: FileObserver? = null
 
     /**
-     * Last processing error, kept visible in the idle notification until a file
-     * succeeds or [reconcileMonitor] switches to a different folder. Outlives
-     * the [monitorLoop] that set it, so it must be cleared on that switch.
-     */
-    private var lastErrorText: String? = null
-
-    /**
      * Id of the most recently delivered start command, for the one stop that
      * cannot name its own ([monitorLoop]'s, which outlives the start that
      * launched it). Written on the main thread, read from [serviceScope].
@@ -227,16 +220,19 @@ class DirectoryMonitorService : Service() {
         if (monitorJob?.isActive == true && dirPath == watchingDirPath) return
 
         monitorJob?.cancelAndJoin()
-        // The message names a file in the folder being left behind, and
-        // monitorLoop opens with it — so without this the new folder's first
-        // notification would report the old folder's failure.
-        lastErrorText = null
         watchingDirPath = dirPath
         monitorJob = serviceScope.launch { monitorLoop(dirPath, settings.bucketName) }
     }
 
     private suspend fun monitorLoop(dirPath: String, bucketName: String?) {
         val idleText = "Watching ${bucketName ?: dirPath} for new images…"
+
+        // Last processing failure, shown in the notification in place of
+        // [idleText] until a file succeeds. Local rather than a field: it names
+        // a file in *this* folder, so a loop started for a different one must
+        // not open with it — and scoping it to the loop is what guarantees
+        // that, instead of reconcileMonitor having to remember to clear it.
+        var lastErrorText: String? = null
 
         // Some camera apps close a file, then reopen it to write EXIF and
         // close again — two CLOSE_WRITE events for one image. Entries age out by
@@ -255,7 +251,7 @@ class DirectoryMonitorService : Service() {
         // observer feeding a channel nobody reads.
         try {
             startObserver(dirPath, watchEvents)
-            updateNotification(lastErrorText ?: idleText)
+            updateNotification(idleText)
             for (event in watchEvents) {
                 val file = when (event) {
                     WatchEvent.WatchedDirGone -> {
