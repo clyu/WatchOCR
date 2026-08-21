@@ -23,6 +23,20 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.util.UUID
 
+/**
+ * The URI produced no image bytes: the stream would not open, or opened on
+ * nothing at all.
+ *
+ * Distinct from an image the API could not make sense of, which is a verdict on
+ * bytes that were read. Here nothing was read, so there is no verdict to reuse
+ * the next time the same path is announced — which is what
+ * [com.watchocr.app.service.DirectoryMonitorService] needs in order to let that
+ * later event through. A file that reads as nothing is most often a two-pass
+ * writer's creation caught mid-flight, and the write that fills it announces
+ * itself with an event of its own.
+ */
+class UnreadableImageException(message: String) : Exception(message)
+
 object OcrProcessor {
 
     /**
@@ -131,10 +145,15 @@ object OcrProcessor {
     ): Result<OcrRecord> = withActiveJob {
         withContext(Dispatchers.IO) {
             try {
+                // [UnreadableImageException] rather than a plain one for both:
+                // the monitor tells "no bytes were read" apart from "these bytes
+                // are no good", and only the second settles a path for good.
                 val rawBytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: return@withContext Result.failure(Exception("Unable to open image: $uri"))
+                    ?: return@withContext Result.failure(
+                        UnreadableImageException("Unable to open image: $uri")
+                    )
                 if (rawBytes.isEmpty()) {
-                    return@withContext Result.failure(Exception("Image is empty: $uri"))
+                    return@withContext Result.failure(UnreadableImageException("Image is empty: $uri"))
                 }
                 // getType only resolves content:// providers, so it returns null
                 // for the file:// URIs the monitor passes in; there the extension

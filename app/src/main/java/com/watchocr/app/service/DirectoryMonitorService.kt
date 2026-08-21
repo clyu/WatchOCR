@@ -22,6 +22,7 @@ import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.network.ApiHttpException
 import com.watchocr.app.ocr.OcrProcessor
+import com.watchocr.app.ocr.UnreadableImageException
 import com.watchocr.app.ui.describeForUser
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -421,9 +422,14 @@ class DirectoryMonitorService : Service() {
      * Whether another attempt at the same file could plausibly do better. 4xx
      * responses are permanent (invalid API key: 400/403, unprocessable image:
      * 400) — retrying them is pointless — except 408 (request timeout) and 429
-     * (rate limited), which are transient like the 5xx range. A file that was
-     * already gone when it was read (FileNotFoundException) is permanent too:
-     * reading the same missing path again immediately reads nothing.
+     * (rate limited), which are transient like the 5xx range. A file that gave
+     * up no bytes — already gone (FileNotFoundException), or read as nothing
+     * ([UnreadableImageException]) — is permanent too: reading the same path
+     * again immediately reads the same nothing.
+     *
+     * Both are named rather than left to the `else` branch, so that giving
+     * either one an IOException supertype later cannot quietly move it into the
+     * retryable arm above.
      *
      * Answers that question only, not "is this file finished with" — see
      * [isSettled], which the two disagree on.
@@ -432,7 +438,7 @@ class DirectoryMonitorService : Service() {
      * `Result.exceptionOrNull()`; a success is not retryable.
      */
     private fun isRetryable(e: Throwable?): Boolean = when (e) {
-        is FileNotFoundException -> false
+        is FileNotFoundException, is UnreadableImageException -> false
         is IOException -> true
         is ApiHttpException -> e.code == 408 || e.code == 429 || e.code in 500..599
         else -> false
@@ -452,20 +458,27 @@ class DirectoryMonitorService : Service() {
      * that actively counterproductive. Transient failures settle nothing — there
      * a duplicate event is a free extra attempt once the network recovers.
      *
-     * FileNotFoundException is the one permanent failure that settles nothing
-     * either, and the reason this is not simply `!isRetryable`: no bytes were
-     * ever read, so there is no outcome to reuse. It is permanent only in that
-     * re-reading a path that is currently missing is pointless; a path that
-     * comes back — a `.trashed-`/`.pending-` rename round-trip, a writer that
-     * unlinked and recreated the file — comes back with different bytes, and the
-     * event announcing them has to get through.
+     * The two failures that read no bytes at all — FileNotFoundException and
+     * [UnreadableImageException] — settle nothing either, and are the reason
+     * this is not simply `!isRetryable`: there is no verdict about any bytes to
+     * reuse. They are permanent only in that re-reading a path that is right now
+     * missing or empty is pointless; a path that fills — a `.trashed-`/
+     * `.pending-` rename round-trip, a writer that unlinked and recreated the
+     * file, the second pass of one that creates it empty — fills with different
+     * bytes, and the event announcing them has to get through.
      *
-     * Nothing needs to be held back for the two-pass writer that creates a file
-     * empty: that event never reaches here, having been dropped by
-     * [monitorLoop]'s length check.
+     * [monitorLoop]'s length check drops most of a two-pass writer's creation
+     * events before they ever reach here, but it cannot drop all of them: the
+     * check and the read that follows it are separate steps, so a file truncated
+     * and rewritten in between passes the check and then reads as nothing. That
+     * is the case [UnreadableImageException] is here to keep unsettled — held
+     * back, the event carrying the real bytes would be dropped as a duplicate
+     * and the image never processed.
      */
     private fun isSettled(failure: Throwable?): Boolean =
-        !isRetryable(failure) && failure !is FileNotFoundException
+        !isRetryable(failure) &&
+            failure !is FileNotFoundException &&
+            failure !is UnreadableImageException
 
     /**
      * Long-running service: enforces the history retention setting periodically,
