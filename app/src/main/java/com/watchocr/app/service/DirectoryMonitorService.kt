@@ -311,26 +311,23 @@ class DirectoryMonitorService : Service() {
                     Log.w(LOG_TAG, "failed ${file.name}: ${failure.message}")
                     lastErrorText = "Failed to process ${file.name}: ${failure.describeForUser()}"
                 }
-                // A rejected key is not this file's problem: it fails every
-                // image the same way, so carrying on would spend one pointless
-                // request per screenshot for as long as the folder keeps
-                // filling — while the notification still reads "Watching…" and
-                // nothing tells the user why History stays empty. Stop the way
-                // the blank-key branch above does, and with latestStartId for
+                // Settings the API will not accept are not this file's problem:
+                // they fail every image the same way, so carrying on would spend
+                // one pointless request per screenshot for as long as the folder
+                // keeps filling — while the notification still reads "Watching…"
+                // and nothing tells the user why History stays empty. Stop the
+                // way the blank-key branch above does, and with latestStartId for
                 // the same reason it uses one.
                 //
-                // Reopening WatchOCR without fixing the key does restart the
-                // loop — canMonitor only asks whether a key is set, not whether
-                // it works — and it stops again on the next image. That is the
-                // same shape as the folder-gone alert, and it costs one request
-                // per app open rather than one per image.
-                if (failure is ApiHttpException && failure.isCredentialFailure) {
-                    Log.w(LOG_TAG, "API key rejected, stopping monitor")
-                    stopWithAlert(
-                        "Gemini rejected the API key (${failure.describeForUser()}) — " +
-                            "monitoring stopped. Check it in Settings.",
-                        latestStartId
-                    )
+                // Reopening WatchOCR without fixing them does restart the loop —
+                // canMonitor only asks whether a key is set, not whether the key
+                // or the model works — and it stops again on the next image. That
+                // is the same shape as the folder-gone alert, and it costs one
+                // request per app open rather than one per image.
+                val settingsAlert = settingsAlertFor(failure)
+                if (settingsAlert != null) {
+                    Log.w(LOG_TAG, "unusable API settings, stopping monitor")
+                    stopWithAlert(settingsAlert, latestStartId)
                     return
                 }
                 // Hold back only the outcomes that settle these bytes for good,
@@ -421,11 +418,11 @@ class DirectoryMonitorService : Service() {
     /**
      * Whether another attempt at the same file could plausibly do better. 4xx
      * responses are permanent (invalid API key: 400/403, unprocessable image:
-     * 400) — retrying them is pointless — except 408 (request timeout) and 429
-     * (rate limited), which are transient like the 5xx range. A file that gave
-     * up no bytes — already gone (FileNotFoundException), or read as nothing
-     * ([UnreadableImageException]) — is permanent too: reading the same path
-     * again immediately reads the same nothing.
+     * 400, unknown model: 404) — retrying them is pointless — except 408
+     * (request timeout) and 429 (rate limited), which are transient like the
+     * 5xx range. A file that gave up no bytes is permanent too — already gone
+     * (FileNotFoundException), or read as nothing ([UnreadableImageException]):
+     * reading the same path again immediately reads the same nothing.
      *
      * Both are named rather than left to the `else` branch, so that giving
      * either one an IOException supertype later cannot quietly move it into the
@@ -442,6 +439,34 @@ class DirectoryMonitorService : Service() {
         is IOException -> true
         is ApiHttpException -> e.code == 408 || e.code == 429 || e.code in 500..599
         else -> false
+    }
+
+    /**
+     * The alert to stop monitoring over when [failure] (null for a success) is
+     * one the user fixes in Settings and every later image would hit
+     * identically; null when it is not one of those.
+     *
+     * A function returning the text rather than a predicate the caller then
+     * writes a message for: the two cases differ in nothing but what they tell
+     * the user, and splitting them across a predicate and a `when` at the call
+     * site would put the only thing that differs somewhere other than the thing
+     * that decides. Adding a third case is then one branch here.
+     *
+     * Deliberately narrow. A plain 400 stays out of it: the API answers an image
+     * it cannot process with the same code as a request it cannot parse, so
+     * stopping over one would let a single bad screenshot take monitoring down.
+     */
+    private fun settingsAlertFor(failure: Throwable?): String? {
+        if (failure !is ApiHttpException) return null
+        return when {
+            failure.isCredentialFailure ->
+                "Gemini rejected the API key (${failure.describeForUser()}) — " +
+                    "monitoring stopped. Check it in Settings."
+            failure.isModelUnavailable ->
+                "Gemini rejected the model name (${failure.describeForUser()}) — " +
+                    "monitoring stopped. Check it in Settings."
+            else -> null
+        }
     }
 
     /**

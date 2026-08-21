@@ -50,6 +50,21 @@ class ApiHttpException(val code: Int, val reason: String?, message: String) : Ex
         // API_KEY_INVALID is the reason the Gemini API pairs with its 400 for a
         // key it cannot parse or no longer recognises.
         get() = code == 401 || code == 403 || reason == "API_KEY_INVALID"
+
+    /**
+     * Whether the API has no model to serve the request under the name it was
+     * given — either no such model, or one that does not do generateContent.
+     * Permanent for every later request in the same way [isCredentialFailure]
+     * is, and separate from it only so the two can say different things to the
+     * user: one points at the key, the other at the model name.
+     *
+     * The code alone is enough here, unlike the 400 above. The request URL is a
+     * fixed base plus the configured model name, so that name is the only thing
+     * about it that can fail to resolve — nothing about the image being sent
+     * can produce a 404.
+     */
+    val isModelUnavailable: Boolean
+        get() = code == 404
 }
 
 /**
