@@ -9,9 +9,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -22,6 +25,7 @@ import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -29,6 +33,7 @@ import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
@@ -221,6 +226,9 @@ fun SettingsScreen(
 
     // Non-null while the folder picker dialog is showing.
     var pickerBuckets by remember { mutableStateOf<List<ImageBucket>?>(null) }
+    // True while [openFolderPicker]'s query is still running, which is the whole
+    // gap between the tap and the dialog.
+    var isQueryingBuckets by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
     var retentionMenuExpanded by remember { mutableStateOf(false) }
 
@@ -238,15 +246,23 @@ fun SettingsScreen(
     }
 
     fun openFolderPicker() {
+        // Set here rather than inside the coroutine, so the button reacts on the
+        // tap itself instead of one dispatch later. Cleared in a finally so the
+        // success, failure and cancellation paths all go through one reset.
+        isQueryingBuckets = true
         scope.launch {
-            runQuietly("image folder query failed") {
-                withContext(Dispatchers.IO) { MediaStoreImages.queryBuckets(context) }
+            try {
+                runQuietly("image folder query failed") {
+                    withContext(Dispatchers.IO) { MediaStoreImages.queryBuckets(context) }
+                }
+                    .onSuccess { pickerBuckets = it }
+                    // The dialog is the whole point of the tap, so a failure has
+                    // to say so: leaving it unopened reads as a button that does
+                    // nothing at all.
+                    .onFailure { toast("Could not read this device's image folders.") }
+            } finally {
+                isQueryingBuckets = false
             }
-                .onSuccess { pickerBuckets = it }
-                // The dialog is the whole point of the tap, so a failure has to
-                // say so: leaving it unopened reads as a button that does
-                // nothing at all.
-                .onFailure { toast("Could not read this device's image folders.") }
         }
     }
 
@@ -273,11 +289,30 @@ fun SettingsScreen(
     ) {
         SettingsSection("Monitored Folder", dividerAbove = false) {
             Text(settings.bucketName ?: "No folder selected", style = MaterialTheme.typography.bodyMedium)
-            Button(onClick = {
-                val hasFullAccess = ContextCompat.checkSelfPermission(context, mediaImagesPermission) ==
-                    PackageManager.PERMISSION_GRANTED
-                if (hasFullAccess) openFolderPicker() else permissionLauncher.launch(mediaImagesRequest)
-            }) {
+            // MediaStoreImages.queryBuckets walks every image row on the device,
+            // which is seconds of work on a full gallery. Without something to
+            // show for it the tap reads as a button that does nothing until the
+            // dialog appears; disabled, it also cannot start a second query over
+            // the first.
+            Button(
+                enabled = !isQueryingBuckets,
+                onClick = {
+                    val hasFullAccess = ContextCompat.checkSelfPermission(context, mediaImagesPermission) ==
+                        PackageManager.PERMISSION_GRANTED
+                    if (hasFullAccess) openFolderPicker() else permissionLauncher.launch(mediaImagesRequest)
+                }
+            ) {
+                if (isQueryingBuckets) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp,
+                        // The default is colorScheme.primary, which on a filled
+                        // button is very nearly its own background. LocalContentColor
+                        // is what the label uses, disabled alpha included.
+                        color = LocalContentColor.current
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text("Choose Folder")
             }
         }
