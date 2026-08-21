@@ -310,6 +310,28 @@ class DirectoryMonitorService : Service() {
                     Log.w(LOG_TAG, "failed ${file.name}: ${failure.message}")
                     lastErrorText = "Failed to process ${file.name}: ${failure.describeForUser()}"
                 }
+                // A rejected key is not this file's problem: it fails every
+                // image the same way, so carrying on would spend one pointless
+                // request per screenshot for as long as the folder keeps
+                // filling — while the notification still reads "Watching…" and
+                // nothing tells the user why History stays empty. Stop the way
+                // the blank-key branch above does, and with latestStartId for
+                // the same reason it uses one.
+                //
+                // Reopening WatchOCR without fixing the key does restart the
+                // loop — canMonitor only asks whether a key is set, not whether
+                // it works — and it stops again on the next image. That is the
+                // same shape as the folder-gone alert, and it costs one request
+                // per app open rather than one per image.
+                if (failure is ApiHttpException && failure.isCredentialFailure) {
+                    Log.w(LOG_TAG, "API key rejected, stopping monitor")
+                    stopWithAlert(
+                        "Gemini rejected the API key (${failure.describeForUser()}) — " +
+                            "monitoring stopped. Check it in Settings.",
+                        latestStartId
+                    )
+                    return
+                }
                 // Hold back only the outcomes that settle these bytes for good,
                 // so a duplicate event for the same path is dropped rather than
                 // re-run; [isSettled] spells out which those are.
@@ -423,8 +445,9 @@ class DirectoryMonitorService : Service() {
      * and reopening it to write EXIF.
      *
      * A success settles it, and so do the permanent failures [isRetryable] rules
-     * out: an invalid key, an image the API cannot read. A duplicate event
-     * carries the same bytes, so re-running one of those buys a second identical
+     * out and [monitorLoop] does not stop the whole loop over: an image the API
+     * cannot read, a response that came back unusable. A duplicate event carries
+     * the same bytes, so re-running one of those buys a second identical
      * rejection at the price of another full retry cycle, and the 429 case makes
      * that actively counterproductive. Transient failures settle nothing — there
      * a duplicate event is a free extra attempt once the network recovers.

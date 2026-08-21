@@ -27,9 +27,30 @@ data class GeminiOcrResult(
 /**
  * A non-2xx API response, with the HTTP status [code] so callers can tell
  * permanent failures (4xx: invalid key, unprocessable image) from transient
- * ones worth retrying (429, 5xx).
+ * ones worth retrying (429, 5xx), and [reason] — the `google.rpc.ErrorInfo`
+ * reason the body carries, where it carries one — so they can tell the
+ * permanent failures apart from each other.
  */
-class ApiHttpException(val code: Int, message: String) : Exception(message)
+class ApiHttpException(val code: Int, val reason: String?, message: String) : Exception(message) {
+
+    /**
+     * Whether the API rejected the caller rather than this particular request,
+     * so every later request would be rejected the same way and there is
+     * nothing to be gained by sending one.
+     *
+     * The status code alone cannot answer that. The Gemini API reports a
+     * malformed or revoked key as 400 INVALID_ARGUMENT — the same code an image
+     * it cannot process comes back as — and only [reason] separates the two.
+     * 401 and 403 need no reason, nothing about a single image being able to
+     * produce them, and 403 also covers the neighbouring cases that are just as
+     * permanent and just as invisible from a background service: the API not
+     * enabled for the project, a key restricted to other callers, billing off.
+     */
+    val isCredentialFailure: Boolean
+        // API_KEY_INVALID is the reason the Gemini API pairs with its 400 for a
+        // key it cannot parse or no longer recognises.
+        get() = code == 401 || code == 403 || reason == "API_KEY_INVALID"
+}
 
 /**
  * Client for the Gemini API: a single generateContent call with inline image
@@ -77,9 +98,11 @@ object GeminiClient {
         client.newCall(request).await().use { response ->
             val bodyString = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
+                val error = parseApiError(bodyString)
                 throw ApiHttpException(
                     response.code,
-                    "API request failed with HTTP ${response.code}: ${extractApiError(bodyString)}"
+                    errorReason(error),
+                    "API request failed with HTTP ${response.code}: ${extractApiError(error, bodyString)}"
                 )
             }
             parseResponse(bodyString)
@@ -238,7 +261,39 @@ object GeminiClient {
         }
 
     /**
-     * Pulls the human-readable `error.message` out of an API error body, falling
+     * The `error` object of an API error body, or null when the body is not JSON
+     * at all or carries no error object.
+     *
+     * Parsed once and handed to both [errorReason] and [extractApiError]: the
+     * two read different halves of the same object, and a body large enough to
+     * be worth capping is large enough not to want parsed twice.
+     */
+    private fun parseApiError(body: String): JSONObject? = try {
+        JSONObject(body).optJSONObject("error")
+    } catch (e: Exception) {
+        null // not JSON at all — a proxy's HTML error page, say
+    }
+
+    /**
+     * The `google.rpc.ErrorInfo` reason from an error's `details` array — the
+     * machine-readable half of a failure, where `message` is the half written
+     * for a person to read. Null when the body carries no such entry, which
+     * most of them do not.
+     *
+     * Taken from the first entry that has one rather than by matching `@type`:
+     * `details` holds a mix of payloads distinguished by that URL, but ErrorInfo
+     * is the only one of them carrying a `reason` at all.
+     */
+    private fun errorReason(error: JSONObject?): String? {
+        val details = error?.optJSONArray("details") ?: return null
+        return (0 until details.length()).asSequence()
+            .mapNotNull { details.optJSONObject(it) }
+            .mapNotNull { it.optStringOrNull("reason") }
+            .firstOrNull()
+    }
+
+    /**
+     * Pulls the human-readable `error.message` out of a parsed API error, falling
      * back to the raw body when there is none, and then — for the 5xx responses
      * that carry no body at all — to a fixed phrase, so the caller's
      * "HTTP 500: …" never trails off after the colon.
@@ -247,14 +302,8 @@ object GeminiClient {
      * just to the raw-body fallback: `error.message` is API-supplied too, and
      * nothing bounds what a gateway or proxy in front of the API may put there.
      */
-    private fun extractApiError(body: String): String {
-        val message = try {
-            JSONObject(body).optJSONObject("error")?.optStringOrNull("message")?.takeIf { it.isNotBlank() }
-        } catch (e: Exception) {
-            null // not JSON at all — a proxy's HTML error page, say
-        }
-        return (message ?: body.trim())
+    private fun extractApiError(error: JSONObject?, body: String): String =
+        (error?.optStringOrNull("message")?.takeIf { it.isNotBlank() } ?: body.trim())
             .take(MAX_ERROR_DETAIL_CHARS)
             .ifBlank { "no details in the response body" }
-    }
 }
