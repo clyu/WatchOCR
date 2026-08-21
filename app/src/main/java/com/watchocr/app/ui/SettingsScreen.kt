@@ -133,34 +133,42 @@ private fun SettingsSection(
 }
 
 /**
- * Runs [write] with a failed DataStore edit (a full disk, an unreadable
- * preferences file) reduced to a log line.
+ * Runs [block] with a failure (a full disk, an unreadable preferences file, a
+ * MediaStore query the system refused) reduced to a log line, and reports which
+ * happened so a caller with something on screen can say so too.
  *
- * Neither of [PersistDebounced]'s two call sites can afford to let one escape.
- * Out of the debounce it reaches the recomposer and takes the app down. Out of
- * the flush it lands on a scope that has no handler and that nothing ever
- * joins, so it reaches the thread's default handler and does the same — from a
- * screen the user has already left, which surfaces as a crash on the way out of
- * Settings.
+ * Nothing this screen launches can afford to let one escape, and the two scopes
+ * it launches on fail differently. Most of the work runs on the composition's
+ * [rememberCoroutineScope], whose Job is a child of the composition's own: an
+ * exception there cancels the recomposer and takes the app down. The exception
+ * is [PersistDebounced]'s flush, which runs on a scope that has no handler and
+ * that nothing ever joins, so a failure reaches the thread's default handler and
+ * does the same — from a screen the user has already left, which surfaces as a
+ * crash on the way out of Settings.
  *
- * Losing the edit is then the honest outcome, and unlike HistoryCleanup's quiet
- * sweep there is no next attempt already scheduled to recover it: the field that
- * produced the edit is gone by the time the flush runs, so there is nowhere left
- * to report the failure and nothing left to retry from. The next edit writes
- * again from scratch.
+ * Swallowing the failure is then the honest outcome, and for a settings write
+ * there is nothing to retry from either: unlike HistoryCleanup's quiet sweep,
+ * which has a next attempt already scheduled, the field that produced the edit
+ * may be gone by the time the flush runs. Nor is there anything to say — every
+ * field and menu here reads back from DataStore, so one whose write was lost
+ * keeps showing the stored value, and the next edit writes again from scratch.
  *
- * Cancellation is rethrown — that is the debounce being superseded by a newer
- * keystroke, not a failed write.
+ * The two actions the user is actively waiting on — opening the folder picker
+ * and clearing history — have no such tell, so they read the returned [Result]
+ * and put one up.
+ *
+ * Cancellation is rethrown: that is a debounce superseded by a newer keystroke,
+ * or the screen's scope shutting down, not a failed write.
  */
-private suspend fun writeQuietly(write: suspend (String) -> Unit, value: String) {
+private suspend fun <T> runQuietly(logMessage: String, block: suspend () -> T): Result<T> =
     try {
-        write(value)
+        Result.success(block())
     } catch (e: CancellationException) {
         throw e
     } catch (e: Exception) {
-        Log.w(LOG_TAG, "settings write failed, edit not persisted", e)
+        Log.w(LOG_TAG, logMessage, e)
+        Result.failure(e)
     }
-}
 
 /**
  * Persists edits to one settings text field through [write], coalesced over
@@ -182,7 +190,7 @@ private suspend fun writeQuietly(write: suspend (String) -> Unit, value: String)
  * cancelled. All that scope ever holds is a single-key DataStore write, which is
  * NonCancellable and completes on its own. Never being cancelled also means
  * nothing ever joins it, so a failure it carried would go straight to the
- * thread's default handler: what is launched there has to be [writeQuietly],
+ * thread's default handler: what is launched there has to be [runQuietly],
  * never a raw write.
  *
  * [stored] is what DataStore already holds, so leaving a field nobody touched
@@ -205,7 +213,7 @@ private fun PersistDebounced(value: String, stored: String, write: suspend (Stri
             .drop(1)
             .collectLatest { edited ->
                 delay(SETTINGS_WRITE_DEBOUNCE_MS)
-                writeQuietly(currentWrite.value, edited)
+                runQuietly("settings write failed, edit not persisted") { currentWrite.value(edited) }
             }
     }
 
@@ -216,7 +224,9 @@ private fun PersistDebounced(value: String, stored: String, write: suspend (Stri
             if (edited == currentStored.value) return@onDispose
             // Main.immediate, so this starts on the spot instead of waiting for
             // a dispatch that the departing screen may not be around for.
-            flushScope.launch { writeQuietly(currentWrite.value, edited) }
+            flushScope.launch {
+                runQuietly("settings write failed, edit not persisted") { currentWrite.value(edited) }
+            }
         }
     }
 }
@@ -250,16 +260,25 @@ fun SettingsScreen(
     PersistDebounced(value = apiKey, stored = settings.apiKey) { settingsDataStore.setApiKey(it) }
     PersistDebounced(value = model, stored = settings.model) { settingsDataStore.setModel(it) }
 
-    fun openFolderPicker() {
-        scope.launch {
-            pickerBuckets = withContext(Dispatchers.IO) { MediaStoreImages.queryBuckets(context) }
-        }
-    }
-
     // Most messages here explain a permission or path problem the user has to
-    // read and act on, so LENGTH_LONG is the default.
+    // read and act on, so LENGTH_LONG is the default. Declared first because a
+    // local function can only call one already in scope, and openFolderPicker
+    // now reports its own failures.
     fun toast(message: String, duration: Int = Toast.LENGTH_LONG) {
         Toast.makeText(context, message, duration).show()
+    }
+
+    fun openFolderPicker() {
+        scope.launch {
+            runQuietly("image folder query failed") {
+                withContext(Dispatchers.IO) { MediaStoreImages.queryBuckets(context) }
+            }
+                .onSuccess { pickerBuckets = it }
+                // The dialog is the whole point of the tap, so a failure has to
+                // say so: leaving it unopened reads as a button that does
+                // nothing at all.
+                .onFailure { toast("Could not read this device's image folders.") }
+        }
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -370,8 +389,14 @@ fun SettingsScreen(
                             onClick = {
                                 retentionMenuExpanded = false
                                 // MainActivity's LaunchedEffect(settings.retentionDays)
-                                // runs the cleanup once this write lands.
-                                scope.launch { settingsDataStore.setRetentionDays(days) }
+                                // runs the cleanup once this write lands. One that
+                                // does not leaves the menu showing the stored value,
+                                // so the log line is the whole of the reporting.
+                                scope.launch {
+                                    runQuietly("retention setting write failed") {
+                                        settingsDataStore.setRetentionDays(days)
+                                    }
+                                }
                             }
                         )
                     }
@@ -392,8 +417,13 @@ fun SettingsScreen(
                 TextButton(onClick = {
                     showClearConfirm = false
                     scope.launch {
-                        HistoryCleanup.clearAll(context)
-                        toast("History cleared", Toast.LENGTH_SHORT)
+                        runQuietly("clearing history failed") { HistoryCleanup.clearAll(context) }
+                            .onSuccess { toast("History cleared", Toast.LENGTH_SHORT) }
+                            // The sweep deletes rows before files and is not one
+                            // transaction, so a failure can leave part of the
+                            // history behind — the confirmation must not claim
+                            // otherwise.
+                            .onFailure { toast("Could not clear history — some results may remain.") }
                     }
                 }) { Text("Clear") }
             },
@@ -420,15 +450,21 @@ fun SettingsScreen(
                                     .fillMaxWidth()
                                     .clickable {
                                         scope.launch {
-                                            settingsDataStore.setWatchedBucket(bucket.name, bucket.path)
-                                            // Revives a self-stopped service even when the
-                                            // re-selected folder is the one it was already
-                                            // configured for — MainActivity's LaunchedEffect
-                                            // key doesn't change then. start() is idempotent,
-                                            // so a running service is unaffected.
-                                            if (settingsDataStore.settingsFlow.first().canMonitor) {
-                                                DirectoryMonitorService.start(context)
+                                            runQuietly("watched folder write failed") {
+                                                settingsDataStore.setWatchedBucket(bucket.name, bucket.path)
+                                                // Revives a self-stopped service even when the
+                                                // re-selected folder is the one it was already
+                                                // configured for — MainActivity's LaunchedEffect
+                                                // key doesn't change then. start() is idempotent,
+                                                // so a running service is unaffected.
+                                                if (settingsDataStore.settingsFlow.first().canMonitor) {
+                                                    DirectoryMonitorService.start(context)
+                                                }
                                             }
+                                            // Outside the guard: a dialog left standing over a
+                                            // failed write is worse than the failure, and the
+                                            // "Monitored Folder" label reports the outcome
+                                            // either way — it reads back from DataStore.
                                             pickerBuckets = null
                                         }
                                     }
