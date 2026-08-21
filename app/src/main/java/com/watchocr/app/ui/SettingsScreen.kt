@@ -3,7 +3,6 @@ package com.watchocr.app.ui
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
-import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -54,14 +53,13 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.watchocr.app.LOG_TAG
 import com.watchocr.app.data.AppSettings
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.ImageBucket
 import com.watchocr.app.data.MediaStoreImages
 import com.watchocr.app.data.SettingsDataStore
+import com.watchocr.app.runQuietly
 import com.watchocr.app.service.DirectoryMonitorService
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -133,44 +131,6 @@ private fun SettingsSection(
 }
 
 /**
- * Runs [block] with a failure (a full disk, an unreadable preferences file, a
- * MediaStore query the system refused) reduced to a log line, and reports which
- * happened so a caller with something on screen can say so too.
- *
- * Nothing this screen launches can afford to let one escape, and the two scopes
- * it launches on fail differently. Most of the work runs on the composition's
- * [rememberCoroutineScope], whose Job is a child of the composition's own: an
- * exception there cancels the recomposer and takes the app down. The exception
- * is [PersistDebounced]'s flush, which runs on a scope that has no handler and
- * that nothing ever joins, so a failure reaches the thread's default handler and
- * does the same — from a screen the user has already left, which surfaces as a
- * crash on the way out of Settings.
- *
- * Swallowing the failure is then the honest outcome, and for a settings write
- * there is nothing to retry from either: unlike HistoryCleanup's quiet sweep,
- * which has a next attempt already scheduled, the field that produced the edit
- * may be gone by the time the flush runs. Nor is there anything to say — every
- * field and menu here reads back from DataStore, so one whose write was lost
- * keeps showing the stored value, and the next edit writes again from scratch.
- *
- * The two actions the user is actively waiting on — opening the folder picker
- * and clearing history — have no such tell, so they read the returned [Result]
- * and put one up.
- *
- * Cancellation is rethrown: that is a debounce superseded by a newer keystroke,
- * or the screen's scope shutting down, not a failed write.
- */
-private suspend fun <T> runQuietly(logMessage: String, block: suspend () -> T): Result<T> =
-    try {
-        Result.success(block())
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        Log.w(LOG_TAG, logMessage, e)
-        Result.failure(e)
-    }
-
-/**
  * Persists edits to one settings text field through [write], coalesced over
  * [SETTINGS_WRITE_DEBOUNCE_MS] rather than issued per keystroke: every DataStore
  * edit is a read-modify-write and an fsync of the whole preferences file, so
@@ -192,6 +152,12 @@ private suspend fun <T> runQuietly(logMessage: String, block: suspend () -> T): 
  * nothing ever joins it, so a failure it carried would go straight to the
  * thread's default handler: what is launched there has to be [runQuietly],
  * never a raw write.
+ *
+ * A write that fails is simply lost, and unlike HistoryCleanup's quiet sweep
+ * there is no next attempt already scheduled to recover it — the field that
+ * produced the edit may be gone by the time the flush runs. Nothing needs
+ * saying either: the field reads back from DataStore, so one whose write was
+ * lost keeps showing the stored value, and the next edit writes from scratch.
  *
  * [stored] is what DataStore already holds, so leaving a field nobody touched
  * writes nothing.
@@ -239,6 +205,9 @@ fun SettingsScreen(
     draft: SettingsDraftViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    // Everything launched on this scope goes through [runQuietly], never a raw
+    // call: its Job is a child of the composition's own, so an exception in one
+    // of its coroutines cancels the recomposer and takes the app down.
     val scope = rememberCoroutineScope()
 
     // Each field shows the user's own edit once there is one, and the stored

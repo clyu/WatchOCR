@@ -1,9 +1,7 @@
 package com.watchocr.app.data
 
 import android.content.Context
-import android.util.Log
-import com.watchocr.app.LOG_TAG
-import kotlinx.coroutines.CancellationException
+import com.watchocr.app.runQuietly
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -48,20 +46,15 @@ object HistoryCleanup {
      * cannot be sidestepped by a future caller reaching for the louder-looking
      * name.
      *
-     * Cancellation is rethrown; it is not a failed sweep but the caller's scope
-     * (a stopped service, a leaving composition) shutting down. It still
-     * reaches here after [deleteBefore]'s NonCancellable section — but only
-     * from either side of it, never from within, so a cancelled sweep is
-     * always one that either did nothing or ran to the end.
+     * Cancellation [runQuietly] rethrows rather than logs, which is what this
+     * caller needs: it is not a failed sweep but the caller's scope (a stopped
+     * service, a leaving composition) shutting down. It still reaches here after
+     * [deleteBefore]'s NonCancellable section — but only from either side of it,
+     * never from within, so a cancelled sweep is always one that either did
+     * nothing or ran to the end.
      */
     suspend fun deleteOlderThanQuietly(context: Context, retentionDays: Int) {
-        try {
-            deleteOlderThan(context, retentionDays)
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.w(LOG_TAG, "history cleanup failed", e)
-        }
+        runQuietly("history cleanup failed") { deleteOlderThan(context, retentionDays) }
     }
 
     /**
