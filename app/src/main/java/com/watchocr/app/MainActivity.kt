@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -222,7 +223,11 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
                         if (isProcessing) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(24.dp),
-                                color = MaterialTheme.colorScheme.onPrimary
+                                // The default is colorScheme.primary; the FAB's
+                                // container is primaryContainer, and onPrimary is
+                                // near-invisible on it in light themes.
+                                // LocalContentColor is what the Icon branch uses.
+                                color = LocalContentColor.current
                             )
                         } else {
                             Icon(Icons.Default.Add, contentDescription = "Add image")
