@@ -246,6 +246,12 @@ fun SettingsScreen(
     }
 
     fun openFolderPicker() {
+        // The button's `enabled = !isQueryingBuckets` only takes effect one
+        // recomposition after the write below, so two taps delivered in the same
+        // input batch would both get past it and start two concurrent queries —
+        // the first one's finally then re-enabling the button while the second
+        // still runs. This synchronous check closes that window.
+        if (isQueryingBuckets) return
         // Set here rather than inside the coroutine, so the button reacts on the
         // tap itself instead of one dispatch later. Cleared in a finally so the
         // success, failure and cancellation paths all go through one reset.
