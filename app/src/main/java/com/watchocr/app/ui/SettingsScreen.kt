@@ -425,6 +425,14 @@ fun SettingsScreen(
             text = { Text("All OCR results and their saved images will be deleted. This cannot be undone.") },
             confirmButton = {
                 TextButton(onClick = {
+                    // Synchronous same-batch double-tap guard, closing the same
+                    // window openFolderPicker's isQueryingBuckets check does:
+                    // the dialog leaves composition only one recomposition
+                    // after the write below, so a second tap in the same input
+                    // batch would otherwise run this body again and launch a
+                    // second clearAll — harmless to data (the deletes are
+                    // idempotent) but a second "History cleared" toast.
+                    if (!showClearConfirm) return@TextButton
                     showClearConfirm = false
                     scope.launch {
                         runQuietly("clearing history failed") { HistoryCleanup.clearAll(context) }
