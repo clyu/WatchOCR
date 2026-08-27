@@ -487,15 +487,21 @@ fun SettingsScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
+                                        // Same shape as the clear-history confirm button,
+                                        // guard included: the dialog leaves composition
+                                        // only one recomposition after the dismissal
+                                        // below, so two rows tapped in the same input
+                                        // batch would otherwise both run this body — two
+                                        // racing writes, and the one that lands last need
+                                        // not be the row tapped last. The synchronous
+                                        // read closes that window: the first tap wins,
+                                        // the second is ignored.
+                                        if (pickerBuckets == null) return@clickable
                                         // Dismissed here rather than after the write, so
-                                        // the tap is answered immediately and there is no
-                                        // window in which a second folder can be tapped:
-                                        // two writes started that way race, and the one
-                                        // that lands last need not be the one tapped last.
-                                        // It also takes the dialog down when the write
-                                        // fails, which a body inside runQuietly could no
-                                        // longer be relied on to do. Same shape as the
-                                        // clear-history dialog's confirm button.
+                                        // the tap is answered immediately. It also takes
+                                        // the dialog down when the write fails, which a
+                                        // body inside runQuietly could no longer be
+                                        // relied on to do.
                                         //
                                         // Safe to dismiss first because [scope] belongs to
                                         // this screen, not to the dialog: removing the
