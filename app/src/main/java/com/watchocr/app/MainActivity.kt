@@ -47,6 +47,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -218,7 +220,16 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
                 if (selectedTab == 0) {
                     FloatingActionButton(
                         onClick = { pickImageLauncher.launch(arrayOf("image/*")) },
-                        modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(16.dp)
+                            // On the button, not on the Icon: the button stays
+                            // tappable while the spinner branch is showing, and
+                            // that branch has nothing to carry a label — TalkBack
+                            // would announce an unnamed button whenever any OCR
+                            // job is in flight. The action never changes, so one
+                            // label on the merged node covers both branches.
+                            .semantics { contentDescription = "Add image" }
                     ) {
                         if (isProcessing) {
                             CircularProgressIndicator(
@@ -230,7 +241,8 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
                                 color = LocalContentColor.current
                             )
                         } else {
-                            Icon(Icons.Default.Add, contentDescription = "Add image")
+                            // null: the button's semantics above already name it.
+                            Icon(Icons.Default.Add, contentDescription = null)
                         }
                     }
                 }
