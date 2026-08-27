@@ -12,7 +12,7 @@ data class ExpiredRecord(val id: Long, val imagePath: String)
 interface OcrRecordDao {
 
     @Insert
-    suspend fun insert(record: OcrRecord): Long
+    suspend fun insert(record: OcrRecord)
 
     @Query("SELECT * FROM ocr_records ORDER BY timestamp DESC")
     fun getAll(): Flow<List<OcrRecord>>

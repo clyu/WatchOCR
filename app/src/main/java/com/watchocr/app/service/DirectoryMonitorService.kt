@@ -18,7 +18,6 @@ import androidx.core.content.ContextCompat
 import com.watchocr.app.LOG_TAG
 import com.watchocr.app.MainActivity
 import com.watchocr.app.data.HistoryCleanup
-import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.network.ApiHttpException
 import com.watchocr.app.ocr.OcrProcessor
@@ -401,7 +400,7 @@ class DirectoryMonitorService : Service() {
     // Wrapped in OcrProcessor.withActiveJob by the caller so the progress
     // indicator stays on across the backoff delays between attempts, which
     // processImage's own counting does not cover.
-    private suspend fun processWithRetry(file: File, apiKey: String, model: String): Result<OcrRecord> {
+    private suspend fun processWithRetry(file: File, apiKey: String, model: String): Result<Unit> {
         val uri = Uri.fromFile(file)
         var attempt = 1
         while (true) {

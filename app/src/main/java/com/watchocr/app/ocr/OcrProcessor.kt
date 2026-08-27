@@ -132,6 +132,10 @@ object OcrProcessor {
      * Gemini for OCR + translation, copies the (possibly downscaled) image
      * into app-private storage, and persists an [OcrRecord].
      *
+     * Success carries no value on purpose: both callers only ever ask whether
+     * processing failed — History shows new records by observing the database,
+     * not by taking them from here.
+     *
      * Counts itself in [activeJobs], so no caller has to remember to — the one
      * thing every caller previously had to know about this object. The monitor
      * nests a second, longer-lived count on top via [withActiveJob]; nothing
@@ -142,7 +146,7 @@ object OcrProcessor {
         uri: Uri,
         apiKey: String,
         model: String
-    ): Result<OcrRecord> = withActiveJob {
+    ): Result<Unit> = withActiveJob {
         withContext(Dispatchers.IO) {
             try {
                 // [UnreadableImageException] rather than a plain one for both:
@@ -199,7 +203,7 @@ object OcrProcessor {
                 //
                 // Throwable, not Exception, so an OutOfMemoryError is covered too;
                 // delete() is not a suspension point, so it still runs on that path.
-                val id = withContext(NonCancellable) {
+                withContext(NonCancellable) {
                     try {
                         imageFile.writeBytes(bytes)
                         AppDatabase.getInstance(context).ocrRecordDao().insert(record)
@@ -209,9 +213,7 @@ object OcrProcessor {
                     }
                 }
 
-                // insert() returns the generated rowid; carrying it back keeps the
-                // returned record from advertising the unsaved placeholder id 0.
-                Result.success(record.copy(id = id))
+                Result.success(Unit)
             } catch (e: CancellationException) {
                 throw e // cancellation must propagate, not surface as a failed OCR
             } catch (e: Exception) {
