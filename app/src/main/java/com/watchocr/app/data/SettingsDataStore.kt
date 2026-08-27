@@ -1,17 +1,42 @@
 package com.watchocr.app.data
 
 import android.content.Context
+import android.util.Log
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.MutablePreferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.watchocr.app.LOG_TAG
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-private val Context.dataStore by preferencesDataStore(name = "watchocr_settings")
+private val Context.dataStore by preferencesDataStore(
+    name = "watchocr_settings",
+    // A preferences file that no longer deserializes (a write torn by power
+    // loss, say) otherwise throws out of every read: MainActivity's collect
+    // then crashes the app on each launch, and nothing short of clearing app
+    // data recovers. Starting over loses the stored settings, but they can be
+    // re-entered in a way the app itself cannot — the same trade
+    // AnalysisListConverter makes for a corrupt analysis column.
+    //
+    // A corruption handler rather than `.catch { emit(emptyPreferences()) }`
+    // on [SettingsDataStore.settingsFlow]: the handler replaces the file, so
+    // the next edit lands, where a catch would mask every read while leaving
+    // every write to fail against the same corrupt bytes — including the key
+    // the user re-enters to recover. Deliberately nothing for the other
+    // IOExceptions a read can throw: presenting a transient read failure as
+    // empty settings would hand the settings screen blank fields that its
+    // debounced writer then persists over the stored values.
+    corruptionHandler = ReplaceFileCorruptionHandler { e ->
+        Log.w(LOG_TAG, "settings file unreadable, starting over from defaults", e)
+        emptyPreferences()
+    }
+)
 
 data class AppSettings(
     /** Display name of the watched folder, for the settings UI and notification. */
