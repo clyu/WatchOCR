@@ -272,9 +272,21 @@ fun SettingsScreen(
         }
     }
 
+    // True from the tap that launches the permission dialog until its result
+    // arrives, so taps in that gap — the same input batch, or the frames
+    // before the system dialog is up — cannot call requestPermissions a second
+    // time: how the framework stacks overlapping requests is its own business,
+    // and at best the denial toast would show twice. The launcher callback is
+    // where every outcome (grant, denial, dismissal) funnels through, so it is
+    // where the flag clears. Plain remember on purpose: recreation while the
+    // dialog is up resets it, which is safe — the flag only guards taps, and
+    // a showing system dialog already blocks those.
+    var isRequestingPermission by remember { mutableStateOf(false) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
+        isRequestingPermission = false
         val partialAccess = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
             results[Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED] == true
         when {
@@ -305,7 +317,15 @@ fun SettingsScreen(
                 onClick = {
                     val hasFullAccess = ContextCompat.checkSelfPermission(context, mediaImagesPermission) ==
                         PackageManager.PERMISSION_GRANTED
-                    if (hasFullAccess) openFolderPicker() else permissionLauncher.launch(mediaImagesRequest)
+                    when {
+                        // Carries its own synchronous re-entry guard.
+                        hasFullAccess -> openFolderPicker()
+                        isRequestingPermission -> Unit
+                        else -> {
+                            isRequestingPermission = true
+                            permissionLauncher.launch(mediaImagesRequest)
+                        }
+                    }
                 }
             ) {
                 if (isQueryingBuckets) {
