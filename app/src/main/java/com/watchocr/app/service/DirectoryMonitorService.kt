@@ -397,19 +397,53 @@ class DirectoryMonitorService : Service() {
         fileObserver = null
     }
 
-    // Wrapped in OcrProcessor.withActiveJob by the caller so the progress
-    // indicator stays on across the backoff delays between attempts, which
-    // processImage's own counting does not cover.
+    /**
+     * Runs [file] through OCR, retrying the transient failures [isRetryable]
+     * names up to [MAX_ATTEMPTS] times.
+     *
+     * Wrapped in OcrProcessor.withActiveJob by the caller so the progress
+     * indicator stays on across the backoff delays between attempts, which
+     * processImage's own counting does not cover.
+     *
+     * [apiKey] and [model] are what the caller just read, and are used for the
+     * first attempt only: each retry re-reads them instead. A retry is preceded
+     * by [RETRY_DELAY_MS] of doing nothing, which is long enough for the user to
+     * have changed either in Settings — and the failures that get this far are
+     * exactly the ones they would change them over, since a rate-limited key or
+     * an overloaded model is transient (429/503) where an unusable one is not.
+     * Captured once, the remaining attempts would be spent on values the user
+     * has already moved on from, and the whole retry cycle wasted.
+     *
+     * A key cleared during the backoff ends the retries instead of sending a
+     * blank one: that would come back as a credential failure and stop
+     * monitoring with "Gemini rejected the API key", when what happened is that
+     * there is no key any more — [monitorLoop]'s own branch to report, on the
+     * next file. The failure returned is the one that prompted the retry, which
+     * [isSettled] leaves unsettled, so a later event for this path still gets
+     * its attempt.
+     *
+     * The settings read is uncaught, like every other one in this file: settings
+     * this service cannot read are fatal to monitoring itself.
+     */
     private suspend fun processWithRetry(file: File, apiKey: String, model: String): Result<Unit> {
         val uri = Uri.fromFile(file)
+        var currentApiKey = apiKey
+        var currentModel = model
         var attempt = 1
         while (true) {
-            val result = OcrProcessor.processImage(applicationContext, uri, apiKey, model)
+            val result = OcrProcessor.processImage(applicationContext, uri, currentApiKey, currentModel)
             if (result.isSuccess || attempt >= MAX_ATTEMPTS || !isRetryable(result.exceptionOrNull())) {
                 return result
             }
             Log.w(LOG_TAG, "retrying ${file.name} (attempt ${attempt + 1}): ${result.exceptionOrNull()?.message}")
             delay(RETRY_DELAY_MS)
+            val current = settingsDataStore.settingsFlow.first()
+            if (current.apiKey.isBlank()) {
+                Log.w(LOG_TAG, "API key cleared during backoff, not retrying ${file.name}")
+                return result
+            }
+            currentApiKey = current.apiKey
+            currentModel = current.model
             attempt++
         }
     }
