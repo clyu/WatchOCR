@@ -407,12 +407,14 @@ class DirectoryMonitorService : Service() {
      *
      * [apiKey] and [model] are what the caller just read, and are used for the
      * first attempt only: each retry re-reads them instead. A retry is preceded
-     * by [RETRY_DELAY_MS] of doing nothing, which is long enough for the user to
-     * have changed either in Settings — and the failures that get this far are
-     * exactly the ones they would change them over, since a rate-limited key or
-     * an overloaded model is transient (429/503) where an unusable one is not.
-     * Captured once, the remaining attempts would be spent on values the user
-     * has already moved on from, and the whole retry cycle wasted.
+     * by a [retryDelayMillis] backoff of doing nothing — fifteen seconds at the
+     * least, and up to a minute where the API asked for one — which is long
+     * enough for the user to have changed either in Settings, and the failures
+     * that get this far are exactly the ones they would change them over, since
+     * a rate-limited key or an overloaded model is transient (429/503) where an
+     * unusable one is not. Captured once, the remaining attempts would be spent
+     * on values the user has already moved on from, and the whole retry cycle
+     * wasted.
      *
      * A key cleared during the backoff ends the retries instead of sending a
      * blank one: that would come back as a credential failure and stop
@@ -435,8 +437,13 @@ class DirectoryMonitorService : Service() {
             if (result.isSuccess || attempt >= MAX_ATTEMPTS || !isRetryable(result.exceptionOrNull())) {
                 return result
             }
-            Log.w(LOG_TAG, "retrying ${file.name} (attempt ${attempt + 1}): ${result.exceptionOrNull()?.message}")
-            delay(RETRY_DELAY_MS)
+            val backoffMillis = retryDelayMillis(attempt, result.exceptionOrNull())
+            Log.w(
+                LOG_TAG,
+                "retrying ${file.name} in ${backoffMillis}ms " +
+                    "(attempt ${attempt + 1}): ${result.exceptionOrNull()?.message}"
+            )
+            delay(backoffMillis)
             val current = settingsDataStore.settingsFlow.first()
             if (current.apiKey.isBlank()) {
                 Log.w(LOG_TAG, "API key cleared during backoff, not retrying ${file.name}")
@@ -446,6 +453,32 @@ class DirectoryMonitorService : Service() {
             currentModel = current.model
             attempt++
         }
+    }
+
+    /**
+     * How long to wait before attempt [attempt] + 1, given the [failure] that
+     * ended attempt [attempt].
+     *
+     * Doubles per attempt rather than repeating one fixed delay: what reaches
+     * here is a rate limit or an overloaded backend, and returning at a constant
+     * interval is the thing a rate limit exists to refuse.
+     *
+     * An API that said how long to wait — a quota 429's `google.rpc.RetryInfo`,
+     * or a `Retry-After` header — is taken as a floor rather than as the whole
+     * answer. Coming back before it asked is a rejection already promised;
+     * coming back after it costs only time, in a service whose work nobody is
+     * waiting on. A hint shorter than the backoff is therefore no reason to
+     * hurry, and one longer than [MAX_RETRY_DELAY_MS] is not followed all the
+     * way.
+     *
+     * Anything that is not an [ApiHttpException] — the network failures
+     * [isRetryable] also lets through — carries no hint, and gets the plain
+     * backoff.
+     */
+    private fun retryDelayMillis(attempt: Int, failure: Throwable?): Long {
+        val backoffMillis = RETRY_DELAY_MS shl (attempt - 1)
+        val requestedMillis = (failure as? ApiHttpException)?.retryAfterMillis ?: 0L
+        return maxOf(backoffMillis, requestedMillis).coerceAtMost(MAX_RETRY_DELAY_MS)
     }
 
     /**
@@ -666,8 +699,19 @@ class DirectoryMonitorService : Service() {
         /** Attempts per file for transient (network/429/5xx) failures. */
         private const val MAX_ATTEMPTS = 3
 
-        /** Delay between attempts on a transient failure. */
+        /** Delay before the first retry; each further attempt doubles it. */
         private const val RETRY_DELAY_MS = 15_000L
+
+        /**
+         * Ceiling for one backoff, the API's own request included.
+         *
+         * A quota error may name a window far longer than a foreground service
+         * should sit on a single screenshot with "Processing…" on screen while
+         * everything arriving behind it waits in the event channel. Capping
+         * spends the remaining attempts sooner than asked and risks another
+         * rejection, which costs one request; not capping stalls the folder.
+         */
+        private const val MAX_RETRY_DELAY_MS = 60_000L
 
         /** Duplicate events for the same path within this window are dropped. */
         private const val DEDUP_WINDOW_MS = 10_000L

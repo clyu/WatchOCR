@@ -31,7 +31,21 @@ data class GeminiOcrResult(
  * reason the body carries, where it carries one — so they can tell the
  * permanent failures apart from each other.
  */
-class ApiHttpException(val code: Int, val reason: String?, message: String) : Exception(message) {
+class ApiHttpException(
+    val code: Int,
+    val reason: String?,
+    /**
+     * How long the API asked the caller to wait before trying again, in
+     * milliseconds, or null when it did not say — which most responses do not.
+     * A quota 429 is where it usually appears.
+     *
+     * Advisory, and deliberately uncapped: how long a caller is willing to sit
+     * on one request is that caller's decision, not the API's. See the
+     * monitor's `MAX_RETRY_DELAY_MS` for the one that acts on this.
+     */
+    val retryAfterMillis: Long?,
+    message: String
+) : Exception(message) {
 
     /**
      * Whether the API rejected the caller rather than this particular request,
@@ -115,9 +129,13 @@ object GeminiClient {
             if (!response.isSuccessful) {
                 val error = parseApiError(bodyString)
                 throw ApiHttpException(
-                    response.code,
-                    errorReason(error),
-                    "API request failed with HTTP ${response.code}: ${extractApiError(error, bodyString)}"
+                    // ErrorInfo is the only google.rpc payload carrying a
+                    // `reason`, and RetryInfo the only one carrying a
+                    // `retryDelay`, so neither needs matching on `@type`.
+                    code = response.code,
+                    reason = errorDetail(error, "reason"),
+                    retryAfterMillis = retryAfterMillis(error, response),
+                    message = "API request failed with HTTP ${response.code}: ${extractApiError(error, bodyString)}"
                 )
             }
             parseResponse(bodyString)
@@ -279,9 +297,10 @@ object GeminiClient {
      * The `error` object of an API error body, or null when the body is not JSON
      * at all or carries no error object.
      *
-     * Parsed once and handed to both [errorReason] and [extractApiError]: the
-     * two read different halves of the same object, and a body large enough to
-     * be worth capping is large enough not to want parsed twice.
+     * Parsed once and handed to [errorDetail], [retryAfterMillis] and
+     * [extractApiError] alike: they read different halves of the same object,
+     * and a body large enough to be worth capping is large enough not to want
+     * parsed three times.
      */
     private fun parseApiError(body: String): JSONObject? = try {
         JSONObject(body).optJSONObject("error")
@@ -290,21 +309,51 @@ object GeminiClient {
     }
 
     /**
-     * The `google.rpc.ErrorInfo` reason from an error's `details` array — the
-     * machine-readable half of a failure, where `message` is the half written
-     * for a person to read. Null when the body carries no such entry, which
-     * most of them do not.
+     * [field] from the first entry of an error's `details` array that carries
+     * one — the machine-readable half of a failure, where `message` is the half
+     * written for a person to read. Null when no entry does, which is the case
+     * for most error bodies.
      *
-     * Taken from the first entry that has one rather than by matching `@type`:
-     * `details` holds a mix of payloads distinguished by that URL, but ErrorInfo
-     * is the only one of them carrying a `reason` at all.
+     * The first match rather than a match on `@type`: `details` holds a mix of
+     * google.rpc payloads distinguished by that URL, but each field read through
+     * here appears in exactly one of them — `reason` only in ErrorInfo,
+     * `retryDelay` only in RetryInfo — so matching the URL as well would just be
+     * a second spelling of the same fact, and one more thing to keep in step.
      */
-    private fun errorReason(error: JSONObject?): String? {
+    private fun errorDetail(error: JSONObject?, field: String): String? {
         val details = error?.optJSONArray("details") ?: return null
         return (0 until details.length()).asSequence()
             .mapNotNull { details.optJSONObject(it) }
-            .mapNotNull { it.optStringOrNull("reason") }
+            .mapNotNull { it.optStringOrNull(field) }
             .firstOrNull()
+    }
+
+    /**
+     * How long the API asked the caller to wait before retrying, in
+     * milliseconds, or null when it did not say. See
+     * [ApiHttpException.retryAfterMillis], which this fills.
+     *
+     * Two sources, because the answer arrives either way: `google.rpc.RetryInfo`
+     * in the error body, which is what a quota 429 carries, and the standard
+     * `Retry-After` header. The body is read first — it is the more specific of
+     * the two, and the one the Gemini API actually populates.
+     *
+     * `retryDelay` is a protobuf Duration in its JSON form: seconds as a decimal
+     * with a trailing "s" ("38s", "1.500s"). Of `Retry-After` only the
+     * delta-seconds form is read; the HTTP-date form it also permits reads as no
+     * hint at all, which the caller answers with its own backoff rather than
+     * with a wrong number.
+     *
+     * A value that is absent, unparseable or not positive is all the same
+     * answer — no hint — rather than an instant retry.
+     */
+    private fun retryAfterMillis(error: JSONObject?, response: Response): Long? {
+        val fromBody = errorDetail(error, "retryDelay")
+            ?.removeSuffix("s")
+            ?.toDoubleOrNull()
+            ?.let { (it * 1000).toLong() }
+        val fromHeader = response.header("Retry-After")?.trim()?.toLongOrNull()?.times(1000)
+        return (fromBody ?: fromHeader)?.takeIf { it > 0 }
     }
 
     /**
