@@ -1,7 +1,7 @@
 package com.watchocr.app.network
 
 import com.watchocr.app.data.AnalysisItem
-import com.watchocr.app.data.optStringOrNull
+import com.watchocr.app.optStringOrNull
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext

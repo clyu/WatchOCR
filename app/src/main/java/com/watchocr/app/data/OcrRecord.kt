@@ -6,19 +6,10 @@ import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
 import com.watchocr.app.LOG_TAG
+import com.watchocr.app.optStringOrNull
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
-
-/**
- * Value of [name] as a string, or null when the key is missing, explicitly
- * null, or empty. Not `optString`: that funnels through `JSONObject.NULL`'s
- * `toString()`, so an explicit `"key": null` comes back as the four-character
- * string "null" rather than the fallback — which then reads as real content
- * everywhere downstream.
- */
-internal fun JSONObject.optStringOrNull(name: String): String? =
-    if (isNull(name)) null else optString(name).takeIf { it.isNotEmpty() }
 
 /**
  * One explained idiom/slang expression. [furigana] is only present when
