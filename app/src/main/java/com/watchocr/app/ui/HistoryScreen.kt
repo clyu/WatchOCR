@@ -161,34 +161,56 @@ private fun OcrRecordCard(
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
-            Text("Original Text (tap to copy)", style = MaterialTheme.typography.labelLarge)
-            Text(
-                record.ocrText,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onCopyOcrText)
-                    .padding(vertical = 4.dp),
-                style = MaterialTheme.typography.bodyMedium
-            )
+            RecordSection("Original Text (tap to copy)") {
+                Text(
+                    record.ocrText,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onCopyOcrText)
+                        .padding(vertical = 4.dp),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
 
-            Spacer(Modifier.height(8.dp))
-            Text("Translation", style = MaterialTheme.typography.labelLarge)
-            Text(record.translation, style = MaterialTheme.typography.bodyMedium)
+            RecordSection("Translation") {
+                Text(record.translation, style = MaterialTheme.typography.bodyMedium)
+            }
 
+            // Outside the section, not inside it: an empty analysis has to take
+            // the label and the gap above it with it, or a card with nothing to
+            // explain would end on a heading over blank space.
             if (record.analysis.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Text("Idiom / Slang Analysis", style = MaterialTheme.typography.labelLarge)
-                record.analysis.forEachIndexed { index, item ->
-                    val line = if (item.expression.isBlank()) {
-                        item.explanation
-                    } else {
-                        val furigana = item.furigana?.let { " ($it)" }.orEmpty()
-                        "${item.expression}$furigana: ${item.explanation}"
+                RecordSection("Idiom / Slang Analysis") {
+                    record.analysis.forEachIndexed { index, item ->
+                        val line = if (item.expression.isBlank()) {
+                            item.explanation
+                        } else {
+                            val furigana = item.furigana?.let { " ($it)" }.orEmpty()
+                            "${item.expression}$furigana: ${item.explanation}"
+                        }
+                        Text("${index + 1}. $line", style = MaterialTheme.typography.bodyMedium)
                     }
-                    Text("${index + 1}. $line", style = MaterialTheme.typography.bodyMedium)
                 }
             }
         }
     }
+}
+
+/**
+ * One labelled block of an [OcrRecordCard]. Emits its children straight into
+ * the caller's [Column] instead of nesting a layout of its own, so [content]
+ * lays out exactly as it did when these were written out inline — the OCR text
+ * still fills the card's width, and an analysis still contributes one row per
+ * item rather than one nested column.
+ *
+ * The gap belongs to the section below it, the way [SettingsSection]'s divider
+ * does. Every block of the card has one, including the first: it separates the
+ * label from the thumbnail row above, which is not a section and emits no gap
+ * of its own.
+ */
+@Composable
+private fun RecordSection(label: String, content: @Composable () -> Unit) {
+    Spacer(Modifier.height(8.dp))
+    Text(label, style = MaterialTheme.typography.labelLarge)
+    content()
 }
