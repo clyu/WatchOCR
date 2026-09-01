@@ -510,15 +510,30 @@ fun SettingsScreen(
                                         // reports the outcome either way — it reads back
                                         // from DataStore.
                                         pickerBuckets = null
+                                        // The one selection MainActivity cannot see:
+                                        // re-picking the folder already stored changes
+                                        // neither of its resume effect's keys (the path
+                                        // is the same, and canMonitor cannot move — it
+                                        // asks only whether a path and a key exist, and
+                                        // the path was already set), so nothing there
+                                        // starts the service and a self-stopped one would
+                                        // stay stopped. Every other selection does move
+                                        // the path key, and that effect starts (or stops)
+                                        // the service for it; starting from here as well
+                                        // would only spend a second startForegroundService
+                                        // and reconcile on the same decision.
+                                        //
+                                        // Read before the write, which is what makes the
+                                        // comparison mean "what is stored right now".
+                                        val reselected = bucket.path == settings.watchedDirPath
                                         scope.launch {
                                             runQuietly("watched folder write failed") {
                                                 settingsDataStore.setWatchedBucket(bucket.name, bucket.path)
-                                                // Revives a self-stopped service even when the
-                                                // re-selected folder is the one it was already
-                                                // configured for — MainActivity's LaunchedEffect
-                                                // key doesn't change then. start() is idempotent,
-                                                // so a running service is unaffected.
-                                                if (settingsDataStore.settingsFlow.first().canMonitor) {
+                                                // canMonitor re-read rather than taken from
+                                                // [settings]: a folder alone does not start
+                                                // monitoring, and the API key may have been
+                                                // cleared since this composition.
+                                                if (reselected && settingsDataStore.settingsFlow.first().canMonitor) {
                                                     DirectoryMonitorService.start(context)
                                                 }
                                             }

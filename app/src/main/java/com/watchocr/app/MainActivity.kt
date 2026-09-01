@@ -121,7 +121,10 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     // already-set key changes nothing this effect decides, and start() is
     // idempotent but not free — no point invoking startForegroundService for
     // each revision. The monitor re-reads the key per file regardless. The path
-    // stays a key so switching folders restarts the loop.
+    // stays a key so switching folders restarts the loop — and is the only thing
+    // that starts the service for a folder change, since the settings picker
+    // starts one only for the re-selection of the folder already stored, which
+    // moves neither key here.
     //
     // Left nullable rather than flattened with `== true`, so "DataStore has not
     // emitted yet" is a key value of its own and the decision below can be read
