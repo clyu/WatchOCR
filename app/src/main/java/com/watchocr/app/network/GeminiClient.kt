@@ -3,6 +3,7 @@ package com.watchocr.app.network
 import com.watchocr.app.data.AnalysisItem
 import com.watchocr.app.optStringOrNull
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.Call
@@ -150,7 +151,12 @@ object GeminiClient {
      * cancels the call instead; a response that loses the race and arrives
      * after cancellation is closed rather than leaked, and OkHttp's own
      * "Canceled" IOException is dropped by the already-cancelled continuation.
+     *
+     * The opt-in is for resume()'s onCancellation lambda, which is still
+     * experimental. It is what closes that losing response, so the alternative
+     * to opting in is the leak the paragraph above exists to rule out.
      */
+    @OptIn(ExperimentalCoroutinesApi::class)
     private suspend fun Call.await(): Response = suspendCancellableCoroutine { continuation ->
         enqueue(object : Callback {
             override fun onResponse(call: Call, response: Response) {
