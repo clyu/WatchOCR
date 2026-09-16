@@ -434,14 +434,15 @@ class DirectoryMonitorService : Service() {
         var attempt = 1
         while (true) {
             val result = OcrProcessor.processImage(applicationContext, uri, currentApiKey, currentModel)
-            if (result.isSuccess || attempt >= MAX_ATTEMPTS || !isRetryable(result.exceptionOrNull())) {
+            val failure = result.exceptionOrNull()
+            if (result.isSuccess || attempt >= MAX_ATTEMPTS || !isRetryable(failure)) {
                 return result
             }
-            val backoffMillis = retryDelayMillis(attempt, result.exceptionOrNull())
+            val backoffMillis = retryDelayMillis(attempt, failure)
             Log.w(
                 LOG_TAG,
                 "retrying ${file.name} in ${backoffMillis}ms " +
-                    "(attempt ${attempt + 1}): ${result.exceptionOrNull()?.message}"
+                    "(attempt ${attempt + 1}): ${failure?.message}"
             )
             delay(backoffMillis)
             val current = settingsDataStore.settingsFlow.first()
