@@ -26,8 +26,15 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # `packages` is overridden only to drop the action's default `tools`: that
+      # is the obsolete standalone SDK Tools package, which Google has removed
+      # from the repository, so sdkmanager fails the whole step looking for it.
+      # Nothing here needs it — the step is wanted for the SDK licences it
+      # accepts, which is what lets AGP fetch platforms/build-tools on demand.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v5
