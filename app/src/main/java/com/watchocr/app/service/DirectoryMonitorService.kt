@@ -260,7 +260,7 @@ class DirectoryMonitorService : Service() {
                         // below; reconcile clears this alert once the folder is
                         // viable again (e.g. re-selected, or recreated by the
                         // camera app and the user reopened WatchOCR).
-                        stopWithAlert(
+                        stopLoopWithAlert(
                             "Watched folder is no longer available — monitoring stopped. Re-select it in Settings.",
                             latestStartId
                         )
@@ -291,7 +291,7 @@ class DirectoryMonitorService : Service() {
                     // latestStartId, not the one that launched this loop: that
                     // one is long superseded (every app open starts the service
                     // again), so stopping against it would never take effect.
-                    stopWithAlert(
+                    stopLoopWithAlert(
                         "Gemini API key is not set — monitoring stopped. Set it in Settings to resume.",
                         latestStartId
                     )
@@ -326,7 +326,7 @@ class DirectoryMonitorService : Service() {
                 val settingsAlert = settingsAlertFor(failure)
                 if (settingsAlert != null) {
                     Log.w(LOG_TAG, "unusable API settings, stopping monitor")
-                    stopWithAlert(settingsAlert, latestStartId)
+                    stopLoopWithAlert(settingsAlert, latestStartId)
                     return
                 }
                 // Hold back only the outcomes that settle these bytes for good,
@@ -340,13 +340,14 @@ class DirectoryMonitorService : Service() {
         } finally {
             // Makes this loop's exit visible to reconcileMonitor, whose
             // "already watching that folder" check would otherwise be satisfied
-            // by a loop on its way out: a coroutine running this block after a
-            // plain `return` (the stopWithAlert paths above) is still Completing
-            // rather than completed, so its Job reports isActive == true. A
-            // start command delivered in that window would cancel the alert,
-            // see the stale path, return early, and leave nothing watching
-            // behind a notification still claiming otherwise. Cleared here
-            // rather than at each `return` so cancellation is covered too.
+            // by a loop on its way out. The three self-stopping paths above
+            // clear it ahead of their own alert instead — [stopLoopWithAlert]
+            // has why that order is the whole point — which leaves this block
+            // the exits that cannot: cancellation (a folder switch's
+            // cancelAndJoin, onDestroy) and anything thrown out of the loop,
+            // both of which arrive at a suspension point rather than at a
+            // `return`. Clearing an already-cleared field costs nothing;
+            // missing either kind of exit does.
             watchingDirPath = null
             stopObserver()
         }
@@ -652,6 +653,36 @@ class DirectoryMonitorService : Service() {
     private fun stopWithAlert(text: String, startId: Int) {
         notificationManager.notify(ALERT_NOTIFICATION_ID, buildNotification(text, alert = true))
         stopSelf(startId)
+    }
+
+    /**
+     * [stopWithAlert] for [monitorLoop]'s three self-stopping paths, which have
+     * to disown the watched folder before the alert goes up rather than leaving
+     * that to the loop's finally.
+     *
+     * A plain `return` does run the finally on the way out, but not as one step
+     * with the stop: in between, the loop is still Completing, so its Job
+     * reports isActive == true while [watchingDirPath] still names the folder.
+     * [reconcileMonitor] reaching its "already watching that folder" check in
+     * that gap — a different thread on [serviceScope]'s dispatcher, with no join
+     * or lock between the two — cancels the alert, matches the stale path
+     * against a job it reads as healthy, and returns early, leaving nothing
+     * watching and no alert. The gap is a few instructions wide, and
+     * [watchingDirPath]'s @Volatile does not close it: what is wrong there is
+     * the order of the two writes, not whether they are seen.
+     *
+     * Clearing first inverts what a reconcile in that gap does — it falls
+     * through to cancelAndJoin (the finally suspends nowhere, so the join
+     * returns at once) and starts a loop for the folder it just read. What such
+     * a reconcile can still do is cancel an alert posted immediately after it
+     * looked, which reads as "monitoring stopped" over a monitor that is in fact
+     * running again. That is the better of the two failures by some distance:
+     * the next reconcile clears it and a tap dismisses it, where a silently dead
+     * monitor announces itself to nobody.
+     */
+    private fun stopLoopWithAlert(text: String, startId: Int) {
+        watchingDirPath = null
+        stopWithAlert(text, startId)
     }
 
     /**
