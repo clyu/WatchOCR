@@ -280,7 +280,7 @@ object OcrProcessor {
         val orientation = try {
             ExifInterface(bytes.inputStream())
                 .getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             return bitmap // no/corrupt EXIF — treat as upright
         }
         val matrix = Matrix()

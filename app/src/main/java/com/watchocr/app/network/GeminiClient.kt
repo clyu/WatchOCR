@@ -269,7 +269,7 @@ object GeminiClient {
         // so the text part is plain JSON — no Markdown fences to strip.
         val resultJson = try {
             JSONObject(rawText)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             throw Exception(
                 if (finishReason == "MAX_TOKENS") "Model response was truncated (MAX_TOKENS)."
                 else "Model returned malformed JSON: ${rawText.take(MAX_ERROR_DETAIL_CHARS)}"
@@ -304,7 +304,7 @@ object GeminiClient {
      */
     private fun parseApiError(body: String): JSONObject? = try {
         JSONObject(body).optJSONObject("error")
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         null // not JSON at all — a proxy's HTML error page, say
     }
 
