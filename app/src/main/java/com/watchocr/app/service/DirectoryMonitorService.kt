@@ -631,6 +631,16 @@ class DirectoryMonitorService : Service() {
             // still missing) must not make a sound again; one posted after the
             // user dismissed the previous alert still does.
             .setOnlyAlertOnce(alert)
+            // Android 12+ holds a foreground service's notification back for ten
+            // seconds before showing it, so that a service which finishes in that
+            // time never flashes one up. This one is not that: it stays for as
+            // long as monitoring runs, and the deferral only reads as the app
+            // taking ten seconds to start watching. It is skipped for action
+            // buttons, a heads-up channel and a few service types — none of which
+            // the ongoing notification has, on IMPORTANCE_LOW and dataSync — so
+            // opt out of it outright. No effect on the alert notification, which
+            // is not a foreground-service one.
+            .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
             .build()
     }
 
