@@ -203,7 +203,12 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
         }
     ) { padding ->
         Row(modifier = Modifier.padding(padding).fillMaxSize()) {
-            Box(modifier = Modifier.weight(1f)) {
+            // fillMaxHeight rather than leaving the height to the content: weight
+            // only fills the Row's width, and History renders nothing until
+            // Room's first emission. Every switch to it would otherwise shrink
+            // the Box to the FAB alone for a frame, flashing the FAB at the top
+            // before the list stretched the Box and dropped it back into place.
+            Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
                 // Keyed on the tab, so leaving one saves its saveable state and
                 // returning restores it — History's scroll position, and the
                 // last-seen top record it decides auto-scrolls from. Without it
