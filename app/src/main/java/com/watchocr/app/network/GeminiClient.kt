@@ -235,7 +235,20 @@ object GeminiClient {
     }
 
     private fun parseResponse(body: String): GeminiOcrResult {
-        val root = JSONObject(body)
+        // Guarded for the same reason as the opt* accessors below: a 2xx whose
+        // body is not a JSON object at all — a captive portal's or a proxy's
+        // HTML page, say — would otherwise throw a raw JSONException ("Value
+        // <html> of type java.lang.String cannot be converted to JSONObject")
+        // straight into a snackbar. The detail is capped like the malformed-JSON
+        // one further down.
+        val root = try {
+            JSONObject(body)
+        } catch (_: Exception) {
+            throw Exception(
+                if (body.isBlank()) "API returned an empty response."
+                else "API response was not JSON: ${body.trim().take(MAX_ERROR_DETAIL_CHARS)}"
+            )
+        }
         // optJSONObject rather than getJSONObject, for the reason spelled out
         // over the parts below: a first candidate that is not an object at all
         // would otherwise throw a raw JSONException straight into a snackbar.
