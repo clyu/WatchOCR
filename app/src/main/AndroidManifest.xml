@@ -11,16 +11,20 @@
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
-    <!-- requestLegacyExternalStorage is for Android 10 alone. The directory
+    <!-- allowBackup is false because nothing this app persists may leave the
+         device. dataExtractionRules is still needed: from Android 12 on the
+         flag no longer covers device-to-device transfer, which that file
+         closes instead — see data_extraction_rules.xml.
+
+         requestLegacyExternalStorage is for Android 10 alone. The directory
          monitor watches and reads the chosen folder by file path, and under
          Android 10's scoped storage an app cannot reach other apps' media that
          way at all; Android 11 restored path access for holders of the read
          permission. Android 11+ ignores the flag for an app targeting API 30+,
          so it changes nothing anywhere else. -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:requestLegacyExternalStorage="true"
-        android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
