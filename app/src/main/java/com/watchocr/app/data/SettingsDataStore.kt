@@ -80,10 +80,19 @@ class SettingsDataStore(private val context: Context) {
         AppSettings(
             bucketName = prefs[Keys.BUCKET_NAME],
             watchedDirPath = prefs[Keys.WATCHED_DIR_PATH],
-            apiKey = prefs[Keys.API_KEY] ?: "",
-            // Blank counts as unset: the settings field writes every keystroke,
-            // so clearing it stores "", which would produce a broken request URL.
-            model = prefs[Keys.MODEL]?.takeUnless { it.isBlank() } ?: AppSettings.DEFAULT_MODEL,
+            // Both text settings are trimmed here, on the one way out, so every
+            // reader — the requests, canMonitor, the settings screen's stored
+            // value — agrees on a single form. They mostly arrive by paste, and
+            // whitespace carried along is never part of either: a trailing
+            // newline in the key makes OkHttp reject the header outright, failing
+            // every image with a message about an unexpected character, and a
+            // space in the model name goes into the request URL and comes back a
+            // 404. On read rather than on write, so values stored before this
+            // come back clean too.
+            apiKey = prefs[Keys.API_KEY]?.trim().orEmpty(),
+            // Blank counts as unset: clearing the settings field stores "",
+            // which would produce a broken request URL.
+            model = prefs[Keys.MODEL]?.trim()?.takeUnless { it.isEmpty() } ?: AppSettings.DEFAULT_MODEL,
             retentionDays = prefs[Keys.RETENTION_DAYS] ?: 0
         )
     }
