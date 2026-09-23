@@ -109,7 +109,16 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
         ActivityResultContracts.RequestPermission()
     ) { /* no-op: notification is best-effort */ }
 
+    // Saveable, so the request goes out once per launch of the app rather than
+    // once per activity instance. A rotation recreates the activity and reruns
+    // the effect below, and on Android 13+ a user who had just declined would
+    // be asked again on the spot — spending the second and last prompt the
+    // system allows before it stops showing the dialog for good.
+    var notificationPermissionAsked by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(Unit) {
+        if (notificationPermissionAsked) return@LaunchedEffect
+        notificationPermissionAsked = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
