@@ -269,13 +269,6 @@ class DirectoryMonitorService : Service() {
     private suspend fun monitorLoop(dirPath: String, bucketName: String?) {
         val idleText = "Watching ${bucketName ?: dirPath} for new images…"
 
-        // Last processing failure, shown in the notification in place of
-        // [idleText] until a file succeeds. Local rather than a field: it names
-        // a file in *this* folder, so a loop started for a different one must
-        // not open with it — and scoping it to the loop is what guarantees
-        // that, instead of reconcileMonitor having to remember to clear it.
-        var lastErrorText: String? = null
-
         // Some camera apps close a file, then reopen it to write EXIF and
         // close again — two CLOSE_WRITE events for one image. Entries age out by
         // timestamp on every event, not by insertion order, so nothing here
@@ -345,12 +338,14 @@ class DirectoryMonitorService : Service() {
                 val failure = OcrProcessor.withActiveJob {
                     processWithRetry(file, current.apiKey, current.model)
                 }.exceptionOrNull()
-                if (failure == null) {
+                // A failure stays in the notification until the next file is
+                // picked up and replaces it with its own progress.
+                val statusText = if (failure == null) {
                     Log.i(LOG_TAG, "processed ${file.name}")
-                    lastErrorText = null
+                    idleText
                 } else {
                     Log.w(LOG_TAG, "failed ${file.name}: ${failure.message}")
-                    lastErrorText = "Failed to process ${file.name}: ${failure.describeForUser()}"
+                    "Failed to process ${file.name}: ${failure.describeForUser()}"
                 }
                 // Settings the API will not accept are not this file's problem:
                 // they fail every image the same way, so carrying on would spend
@@ -377,7 +372,7 @@ class DirectoryMonitorService : Service() {
                 if (isSettled(failure)) {
                     recentlyDone[file.path] = SystemClock.elapsedRealtime()
                 }
-                updateNotification(lastErrorText ?: idleText)
+                updateNotification(statusText)
             }
         } finally {
             // Makes this loop's exit visible to reconcileMonitor, whose
