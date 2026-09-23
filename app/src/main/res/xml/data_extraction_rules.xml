@@ -1,26 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Backup/transfer rules for Android 12+ (API 31+), mirroring backup_rules.xml:
-     everything this app persists is excluded, because all of it is either a
-     secret (the Gemini API key in the settings DataStore) or the user's own
-     content (the history database and the image copies it points at). See that
-     file for why each rule names a directory or spells out every sibling.
+<!-- Device-to-device transfer rules for Android 12+ (API 31+). Everything this
+     app persists is excluded, because all of it is either a secret (the Gemini
+     API key in the settings DataStore) or the user's own content (the history
+     database and the image copies it points at), and README.md promises it
+     stays on the device.
 
-     Both sections spell the rules out rather than relying on one implying the
-     other — cloud backup and device-to-device transfer are configured
-     independently on this API level, and a section left empty transfers
-     everything. -->
+     Only the device-transfer section, deliberately. The manifest's
+     allowBackup="false" turns cloud backup off on every version, and
+     device-to-device transfer too below Android 12 — but from Android 12 on it
+     no longer reaches device-to-device transfer, which is left to this file,
+     and a transfer with no rules here would carry everything.
+
+     Every rule names a directory or spells out each sibling file, because
+     matching is per-path: a rule naming one file leaves the temporary and
+     journal files written beside it fully transferred. -->
 <data-extraction-rules>
-    <cloud-backup>
-        <exclude domain="file" path="datastore" />
-        <exclude domain="file" path="images" />
-        <exclude domain="database" path="watchocr.db" />
-        <exclude domain="database" path="watchocr.db-wal" />
-        <exclude domain="database" path="watchocr.db-shm" />
-        <exclude domain="database" path="watchocr.db-journal" />
-    </cloud-backup>
     <device-transfer>
+        <!-- The whole directory, not the .preferences_pb file: DataStore
+             writes atomically by filling a sibling .tmp and renaming it over
+             the target, so the key also exists under that second name —
+             indefinitely, if the process is killed between the two steps. -->
         <exclude domain="file" path="datastore" />
+        <!-- OcrProcessor's copy of every processed image. -->
         <exclude domain="file" path="images" />
+        <!-- OCR text, translations and analyses. Room's AUTOMATIC journal mode
+             resolves to WAL on ordinary devices (-wal/-shm) and to TRUNCATE on
+             low-RAM ones (-journal), so all three siblings are listed. -->
         <exclude domain="database" path="watchocr.db" />
         <exclude domain="database" path="watchocr.db-wal" />
         <exclude domain="database" path="watchocr.db-shm" />
