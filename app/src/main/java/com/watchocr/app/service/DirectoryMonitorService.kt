@@ -129,9 +129,10 @@ class DirectoryMonitorService : Service() {
     private var fileObserver: FileObserver? = null
 
     /**
-     * Id of the most recently delivered start command, for the one stop that
-     * cannot name its own ([monitorLoop]'s, which outlives the start that
-     * launched it). Written on the main thread, read from [serviceScope].
+     * Id of the most recently delivered start command, for the stops that
+     * cannot name their own — [stopLoopWithAlert]'s and [onCoroutineFailure]'s,
+     * whose coroutines outlive the start that launched them. Written on the
+     * main thread, read from [serviceScope].
      */
     @Volatile
     private var latestStartId: Int = 0
@@ -291,13 +292,11 @@ class DirectoryMonitorService : Service() {
                 val file = when (event) {
                     WatchEvent.WatchedDirGone -> {
                         Log.w(LOG_TAG, "watched directory gone, stopping monitor")
-                        // latestStartId for the same reason as the API-key stop
-                        // below; reconcile clears this alert once the folder is
-                        // viable again (e.g. re-selected, or recreated by the
-                        // camera app and the user reopened WatchOCR).
+                        // Reconcile clears this alert once the folder is viable
+                        // again (e.g. re-selected, or recreated by the camera app
+                        // and the user reopened WatchOCR).
                         stopLoopWithAlert(
-                            "Watched folder is no longer available — monitoring stopped. Re-select it in Settings.",
-                            latestStartId
+                            "Watched folder is no longer available — monitoring stopped. Re-select it in Settings."
                         )
                         return
                     }
@@ -323,12 +322,8 @@ class DirectoryMonitorService : Service() {
                     // stop instead of burning retries; MainActivity restarts
                     // the service once a key is set again.
                     Log.w(LOG_TAG, "API key cleared, stopping monitor")
-                    // latestStartId, not the one that launched this loop: that
-                    // one is long superseded (every app open starts the service
-                    // again), so stopping against it would never take effect.
                     stopLoopWithAlert(
-                        "Gemini API key is not set — monitoring stopped. Set it in Settings to resume.",
-                        latestStartId
+                        "Gemini API key is not set — monitoring stopped. Set it in Settings to resume."
                     )
                     return
                 }
@@ -352,8 +347,7 @@ class DirectoryMonitorService : Service() {
                 // one pointless request per screenshot for as long as the folder
                 // keeps filling — while the notification still reads "Watching…"
                 // and nothing tells the user why History stays empty. Stop the
-                // way the blank-key branch above does, and with latestStartId for
-                // the same reason it uses one.
+                // way the blank-key branch above does.
                 //
                 // Reopening WatchOCR without fixing them does restart the loop —
                 // canMonitor only asks whether a key is set, not whether the key
@@ -363,7 +357,7 @@ class DirectoryMonitorService : Service() {
                 val settingsAlert = settingsAlertFor(failure)
                 if (settingsAlert != null) {
                     Log.w(LOG_TAG, "unusable API settings, stopping monitor")
-                    stopLoopWithAlert(settingsAlert, latestStartId)
+                    stopLoopWithAlert(settingsAlert)
                     return
                 }
                 // Hold back only the outcomes that settle these bytes for good,
@@ -726,10 +720,14 @@ class DirectoryMonitorService : Service() {
      * running again. That is the better of the two failures by some distance:
      * the next reconcile clears it and a tap dismisses it, where a silently dead
      * monitor announces itself to nobody.
+     *
+     * Scoped to [latestStartId], not to the start that launched the loop: that
+     * one is long superseded (every app open starts the service again), so
+     * stopping against it would never take effect.
      */
-    private fun stopLoopWithAlert(text: String, startId: Int) {
+    private fun stopLoopWithAlert(text: String) {
         watchingDirPath = null
-        stopWithAlert(text, startId)
+        stopWithAlert(text, latestStartId)
     }
 
     /**
@@ -748,7 +746,7 @@ class DirectoryMonitorService : Service() {
      */
     private fun onCoroutineFailure(e: Throwable) {
         Log.e(LOG_TAG, "monitor coroutine failed", e)
-        // latestStartId for the same reason monitorLoop's stop uses it: the
+        // latestStartId for the same reason [stopLoopWithAlert] uses it: the
         // coroutine that failed may long outlive the start that launched it.
         stopWithAlert(
             "Monitoring stopped unexpectedly (${e.describeForUser()}). Reopen WatchOCR to resume.",
