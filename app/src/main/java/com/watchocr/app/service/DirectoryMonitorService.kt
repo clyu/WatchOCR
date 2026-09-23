@@ -557,15 +557,13 @@ class DirectoryMonitorService : Service() {
      */
     private fun settingsAlertFor(failure: Throwable?): String? {
         if (failure !is ApiHttpException) return null
-        return when {
-            failure.isCredentialFailure ->
-                "Gemini rejected the API key (${failure.describeForUser()}) — " +
-                    "monitoring stopped. Check it in Settings."
-            failure.isModelUnavailable ->
-                "Gemini rejected the model name (${failure.describeForUser()}) — " +
-                    "monitoring stopped. Check it in Settings."
-            else -> null
+        val rejected = when {
+            failure.isCredentialFailure -> "API key"
+            failure.isModelUnavailable -> "model name"
+            else -> return null
         }
+        return "Gemini rejected the $rejected (${failure.describeForUser()}) — " +
+            "monitoring stopped. Check it in Settings."
     }
 
     /**
