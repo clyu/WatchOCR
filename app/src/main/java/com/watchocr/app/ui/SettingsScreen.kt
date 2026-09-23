@@ -511,17 +511,16 @@ fun SettingsScreen(
                                         // from DataStore.
                                         pickerBuckets = null
                                         // The one selection MainActivity cannot see:
-                                        // re-picking the folder already stored changes
-                                        // neither of its resume effect's keys (the path
-                                        // is the same, and canMonitor cannot move — it
-                                        // asks only whether a path and a key exist, and
-                                        // the path was already set), so nothing there
-                                        // starts the service and a self-stopped one would
-                                        // stay stopped. Every other selection does move
-                                        // the path key, and that effect starts (or stops)
-                                        // the service for it; starting from here as well
-                                        // would only spend a second startForegroundService
-                                        // and reconcile on the same decision.
+                                        // re-picking the folder already stored writes
+                                        // back the values DataStore already holds, which
+                                        // it drops without emitting, so its resume
+                                        // effect — keyed on the settings — never re-runs,
+                                        // and a self-stopped service would stay stopped.
+                                        // Every other selection does emit, and that
+                                        // effect starts (or stops) the service for it;
+                                        // starting from here as well would only spend a
+                                        // second startForegroundService and reconcile on
+                                        // the same decision.
                                         //
                                         // Read before the write, which is what makes the
                                         // comparison mean "what is stored right now".

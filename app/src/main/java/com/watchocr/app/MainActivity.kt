@@ -117,23 +117,21 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
         }
     }
 
-    // Keyed on canMonitor (does a key exist), not the key's text: revising an
-    // already-set key changes nothing this effect decides, and start() is
-    // idempotent but not free — no point invoking startForegroundService for
-    // each revision. The monitor re-reads the key per file regardless. The path
-    // stays a key so switching folders restarts the loop — and is the only thing
-    // that starts the service for a folder change, since the settings picker
-    // starts one only for the re-selection of the folder already stored, which
-    // moves neither key here.
+    // Keyed on the whole of settings, not just on what decides start vs stop
+    // (the path and canMonitor): the service also stops itself over a key or
+    // model name the API rejects, and its alert asks for a fix in Settings —
+    // one that, made without leaving the app, moves neither of those two. Keyed
+    // on them alone, the fixed service would stay stopped until the next resume.
+    // Every other landed change gets a start too, which costs little: the text
+    // fields' writes are debounced, and reconcileMonitor returns early for a loop
+    // already watching the same folder. The path change still restarts the loop,
+    // and is still the only thing that starts the service for a folder change —
+    // the settings picker starts one only for the re-selection of the folder
+    // already stored, whose write DataStore drops without emitting.
     //
-    // Left nullable rather than flattened with `== true`, so "DataStore has not
-    // emitted yet" is a key value of its own and the decision below can be read
-    // straight off a key. Flattened to false it is indistinguishable from
-    // settings that carry neither a folder nor a key: both keys read
-    // (null, false) before and after that emission, so the effect would not run
-    // for the loaded state at all and would instead be left holding whatever it
-    // captured while settings was still null.
-    val canMonitor = settings?.canMonitor
+    // null until DataStore's first emission, which is a key value of its own and
+    // the "not loaded" branch below.
+    //
     // Re-run on every resume, not only when a key changes: the service stops
     // itself on conditions nothing here can predict (an unexpected failure, the
     // watched folder disappearing), and the alerts it leaves behind tell the
@@ -148,8 +146,8 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     // shade counts too (expanding it pauses without stopping), and so the
     // foreground-service start always happens from an unambiguously foreground
     // state.
-    LifecycleResumeEffect(settings?.watchedDirPath, canMonitor) {
-        when (canMonitor) {
+    LifecycleResumeEffect(settings) {
+        when (settings?.canMonitor) {
             // Not loaded yet. Stopping on this would take down a monitor that
             // is already running — this effect runs again from scratch on every
             // resume and after every configuration change.
