@@ -1,5 +1,6 @@
 package com.watchocr.app.service
 
+import android.app.ForegroundServiceStartNotAllowedException
 import android.app.Notification
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -135,18 +136,57 @@ class DirectoryMonitorService : Service() {
     @Volatile
     private var latestStartId: Int = 0
 
+    /**
+     * Set when [onCreate] was refused the foreground and has already stopped
+     * the service. Main thread only.
+     */
+    private var foregroundDenied = false
+
     override fun onCreate() {
         super.onCreate()
         createNotificationChannels()
         val notification = buildNotification("Watching for new images…")
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: IllegalStateException) {
+            // Android 12+ lets a service go foreground from the background only
+            // under a list of exemptions, and the START_STICKY restart after the
+            // system killed the process is not reliably one of them: the app is
+            // in the background by definition, and nothing called
+            // startForegroundService. Uncaught, the refusal crashes the restarted
+            // process — in the background, where all the user would see is a
+            // monitor that has quietly gone. Anything else startForeground throws
+            // is still a bug, and still crashes.
+            val denied = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                e is ForegroundServiceStartNotAllowedException
+            if (!denied) throw e
+            Log.w(LOG_TAG, "not allowed to go foreground, stopping", e)
+            foregroundDenied = true
+            // Unscoped stopSelf() rather than stopWithAlert's scoped one: no
+            // start command has been delivered yet to scope it to. Reconcile
+            // clears the alert once the reopened app has monitoring running again.
+            notificationManager.notify(
+                ALERT_NOTIFICATION_ID,
+                buildNotification(
+                    "Android did not allow monitoring to restart in the background — " +
+                        "monitoring stopped. Reopen WatchOCR to resume.",
+                    alert = true
+                )
+            )
+            stopSelf()
         }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // The restart's own start command is already queued behind onCreate and
+        // still arrives before onDestroy. Starting a loop from it would post
+        // "Watching…" from a service that is not foreground and is about to be
+        // destroyed, leaving that notification behind with nothing to remove it.
+        if (foregroundDenied) return START_NOT_STICKY
         latestStartId = startId
         // start() is called liberally (every app open, configuration change,
         // watched-bucket change); reconcileMonitor restarts the loop only when
@@ -209,10 +249,12 @@ class DirectoryMonitorService : Service() {
             return
         }
         // Monitoring is viable again, so an alert left behind by an earlier
-        // reconcile ("folder unavailable") or by monitorLoop ("API key is not
-        // set", "folder is no longer available") no longer describes reality. Above the early return on purpose:
-        // a stop that was vetoed by a newer start command leaves the alert up
-        // with the loop still running, and that case must clear it too.
+        // reconcile ("folder unavailable"), by monitorLoop ("API key is not
+        // set", "folder is no longer available") or by onCreate (a restart
+        // refused the foreground) no longer describes reality. Above the early
+        // return on purpose: a stop that was vetoed by a newer start command
+        // leaves the alert up with the loop still running, and that case must
+        // clear it too.
         // Deliberately not in onDestroy — stopWithAlert posts and then stops,
         // so cancelling there would erase the alert it just put up.
         notificationManager.cancel(ALERT_NOTIFICATION_ID)
@@ -730,12 +772,18 @@ class DirectoryMonitorService : Service() {
 
         private const val MONITOR_CHANNEL_ID = "directory_monitor"
 
-        /** For [stopWithAlert]; higher importance than the silent monitor channel. */
+        /**
+         * For [stopWithAlert] and [onCreate]'s refused restart; higher importance
+         * than the silent monitor channel.
+         */
         private const val ALERT_CHANNEL_ID = "monitor_alerts"
 
         private const val NOTIFICATION_ID = 1001
 
-        /** For [stopWithAlert]; distinct from the foreground notification's ID. */
+        /**
+         * For [stopWithAlert] and [onCreate]'s refused restart; distinct from the
+         * foreground notification's ID.
+         */
         private const val ALERT_NOTIFICATION_ID = 1002
 
         /** Attempts per file for transient (network/429/5xx) failures. */
