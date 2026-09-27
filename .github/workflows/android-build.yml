@@ -17,6 +17,10 @@ jobs:
       # secrets can't be referenced directly in `if:` conditions, so mirror the
       # existence check into an env var here where step `if:` conditions can read it.
       HAS_RELEASE_KEYSTORE: ${{ secrets.RELEASE_KEYSTORE_BASE64 != '' }}
+      # The app's versionName, which the build outputs are also named after.
+      APP_VERSION_NAME: 1.0.${{ github.run_number }}
+    outputs:
+      signed: ${{ env.HAS_RELEASE_KEYSTORE }}
     steps:
       - uses: actions/checkout@v5
 
@@ -85,10 +89,83 @@ jobs:
         run: >
           gradle assembleRelease --no-daemon
           -PappVersionCode=${{ github.run_number }}
-          -PappVersionName=1.0.${{ github.run_number }}
+          -PappVersionName="$APP_VERSION_NAME"
+
+      - name: Rename build outputs
+        id: rename
+        run: |
+          apk_name="WatchOCR-$APP_VERSION_NAME"
+          mv app/build/outputs/apk/release/WatchOCR.apk "app/build/outputs/apk/release/$apk_name.apk"
+          mv app/build/outputs/mapping/release/mapping.txt "app/build/outputs/mapping/release/$apk_name-mapping.txt"
+          echo "apk-name=$apk_name" >> "$GITHUB_OUTPUT"
 
       - name: Upload APK
         uses: actions/upload-artifact@v6
         with:
           name: ${{ env.HAS_RELEASE_KEYSTORE == 'true' && 'watchocr-release' || 'watchocr-debug' }}
-          path: app/build/outputs/apk/release/WatchOCR.apk
+          path: app/build/outputs/apk/release/${{ steps.rename.outputs.apk-name }}.apk
+          if-no-files-found: error
+
+      # Needed to retrace obfuscated stack traces from this build.
+      - name: Upload mapping
+        uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.HAS_RELEASE_KEYSTORE == 'true' && 'watchocr-release-mapping' || 'watchocr-debug-mapping' }}
+          path: app/build/outputs/mapping/release/${{ steps.rename.outputs.apk-name }}-mapping.txt
+          if-no-files-found: error
+
+  # Puts the APK on the Releases page as the "Latest Build" pre-release, so that it can be
+  # downloaded without signing in, which workflow artifacts require. A debug-signed APK is not
+  # published: its key lives only in the Actions cache, which can be evicted, so it cannot be
+  # relied on to update an installed build.
+  publish-latest:
+    if: github.ref == 'refs/heads/main' && needs.build.outputs.signed == 'true'
+    needs: build
+    runs-on: ubuntu-latest
+
+    # Every run deletes the Latest Build releases other than its own, so two runs at once would
+    # delete each other's and leave none. Queue them instead.
+    concurrency:
+      group: publish-latest
+      cancel-in-progress: false
+
+    permissions:
+      contents: write
+
+    steps:
+      # This job only runs for release-signed builds, whose artifact is always this one.
+      - name: Download the APK
+        uses: actions/download-artifact@v7
+        with:
+          name: watchocr-release
+          path: apk
+
+      # Every build gets a release under a tag of its own instead of refreshing a fixed tag, which
+      # keeps working if immutable releases are enabled: a published release then cannot have its
+      # assets replaced, and a deleted release's tag name can never be used again. Without
+      # --target the tag would go on the head of the default branch, which need not be this commit.
+      - name: Publish the Latest Build pre-release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ci-${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" apk/*.apk --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" --prerelease --title "Latest Build" \
+            --notes "Built from $GITHUB_SHA by [run $GITHUB_RUN_NUMBER]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)."
+
+      # Only once the new release is up, so that there is always one to download. Deleting a
+      # release leaves its tag behind, hence --cleanup-tag.
+      - name: Delete the Latest Build releases of earlier runs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ci-${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          old_tags="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 100 \
+            --json tagName,name,isPrerelease \
+            | jq -r --arg tag "$TAG" \
+              '.[] | select(.name == "Latest Build" and .isPrerelease and .tagName != $tag) | .tagName')"
+          for old in $old_tags; do
+            gh release delete "$old" --yes --cleanup-tag --repo "$GITHUB_REPOSITORY"
+          done
