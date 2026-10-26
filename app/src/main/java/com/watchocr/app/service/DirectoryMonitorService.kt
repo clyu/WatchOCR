@@ -21,8 +21,11 @@ import com.watchocr.app.MainActivity
 import com.watchocr.app.data.HistoryCleanup
 import com.watchocr.app.data.SettingsDataStore
 import com.watchocr.app.network.ApiHttpException
+import com.watchocr.app.network.GeminiOcrResult
 import com.watchocr.app.ocr.OcrProcessor
 import com.watchocr.app.ocr.UnreadableImageException
+import com.watchocr.app.runQuietly
+import com.watchocr.app.ui.TranslationOverlay
 import com.watchocr.app.ui.describeForUser
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -40,6 +43,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -75,6 +79,14 @@ class DirectoryMonitorService : Service() {
     private var cleanupJob: Job? = null
 
     private val notificationManager by lazy { getSystemService(NotificationManager::class.java) }
+
+    /**
+     * Shows each processed image's result over the app in front, for a user who
+     * has turned that on. Main thread only, like the window it manages:
+     * [reconcileMonitor] and [showOverlay] reach it through Dispatchers.Main,
+     * and [onDestroy] is already there.
+     */
+    private val overlay by lazy { TranslationOverlay(this) }
 
     /**
      * Sent when either notification is tapped. Without it `setAutoCancel` is a
@@ -220,6 +232,10 @@ class DirectoryMonitorService : Service() {
         // finally to run, so waiting on it to stop the watch would leave one live
         // for as long as the loop takes to resume.
         stopObserver()
+        // The overlay reports on monitoring, so it goes when monitoring does —
+        // swiping the app away included. A show still queued for the main thread
+        // cannot put it back: the cancel below reaches it before it gets to run.
+        overlay.hide()
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -236,6 +252,17 @@ class DirectoryMonitorService : Service() {
      */
     private suspend fun reconcileMonitor(startId: Int): Unit = reconcileLock.withLock {
         val settings = settingsDataStore.settingsFlow.first()
+
+        // MainActivity starts the service for every settings change it sees, so
+        // this is where one to the overlay reaches an overlay already on screen:
+        // turned off, it goes; given a new height, it resizes on the spot.
+        withContext(Dispatchers.Main) {
+            if (settings.overlayEnabled) {
+                overlay.maxHeightPercent = settings.overlayMaxHeightPercent
+            } else {
+                overlay.hide()
+            }
+        }
 
         if (!settings.canMonitor) {
             stopSelf(startId)
@@ -330,9 +357,10 @@ class DirectoryMonitorService : Service() {
                 Log.i(LOG_TAG, "processing ${file.name}")
                 updateNotification("Processing ${file.name}…")
 
-                val failure = OcrProcessor.withActiveJob {
+                val result = OcrProcessor.withActiveJob {
                     processWithRetry(file, current.apiKey, current.model)
-                }.exceptionOrNull()
+                }
+                val failure = result.exceptionOrNull()
                 // A failure stays in the notification until the next file is
                 // picked up and replaces it with its own progress.
                 val statusText = if (failure == null) {
@@ -367,6 +395,7 @@ class DirectoryMonitorService : Service() {
                     recentlyDone[file.path] = SystemClock.elapsedRealtime()
                 }
                 updateNotification(statusText)
+                result.getOrNull()?.let { showOverlay(it) }
             }
         } finally {
             // Makes this loop's exit visible to reconcileMonitor, whose
@@ -459,7 +488,7 @@ class DirectoryMonitorService : Service() {
      * The settings read is uncaught, like every other one in this file: settings
      * this service cannot read are fatal to monitoring itself.
      */
-    private suspend fun processWithRetry(file: File, apiKey: String, model: String): Result<Unit> {
+    private suspend fun processWithRetry(file: File, apiKey: String, model: String): Result<GeminiOcrResult> {
         val uri = Uri.fromFile(file)
         var currentApiKey = apiKey
         var currentModel = model
@@ -601,6 +630,34 @@ class DirectoryMonitorService : Service() {
         !isRetryable(failure) &&
             failure !is FileNotFoundException &&
             failure !is UnreadableImageException
+
+    /**
+     * Puts a successfully processed image's [result] up over the app in front,
+     * if the user has turned the overlay on. Failures never reach here: the
+     * notification is where those are reported, and an overlay already up is
+     * left showing the last result that worked.
+     *
+     * The settings are read again rather than taken from the ones the image was
+     * processed with: a retry cycle can run for minutes, plenty of time for the
+     * overlay to have been turned off or resized in Settings.
+     *
+     * Quietly, because the overlay is a convenience on top of History, not part
+     * of monitoring: a window the system refuses — the permission revoked
+     * between [TranslationOverlay.show]'s check and its add, say — must cost this
+     * one overlay, where escaping to [onCoroutineFailure] would stop monitoring
+     * altogether. The settings read stays outside, uncaught like every other one
+     * in this file.
+     */
+    private suspend fun showOverlay(result: GeminiOcrResult) {
+        val settings = settingsDataStore.settingsFlow.first()
+        if (!settings.overlayEnabled) return
+        runQuietly("showing the overlay failed") {
+            withContext(Dispatchers.Main) {
+                overlay.maxHeightPercent = settings.overlayMaxHeightPercent
+                overlay.show(result.translation, result.analysis)
+            }
+        }
+    }
 
     /**
      * Long-running service: enforces the history retention setting periodically,

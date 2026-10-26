@@ -11,6 +11,7 @@ import com.watchocr.app.data.AppDatabase
 import com.watchocr.app.data.OcrImages
 import com.watchocr.app.data.OcrRecord
 import com.watchocr.app.network.GeminiClient
+import com.watchocr.app.network.GeminiOcrResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -132,9 +133,10 @@ object OcrProcessor {
      * Gemini for OCR + translation, copies the (possibly downscaled) image
      * into app-private storage, and persists an [OcrRecord].
      *
-     * Success carries no value on purpose: both callers only ever ask whether
-     * processing failed — History shows new records by observing the database,
-     * not by taking them from here.
+     * Success carries what Gemini returned, for the monitor to put up in its
+     * overlay; the manual import only asks whether processing failed. Neither
+     * hands the result to History, which shows new records by observing the
+     * database, not by taking them from here.
      *
      * Counts itself in [activeJobs], so no caller has to remember to — the one
      * thing every caller previously had to know about this object. The monitor
@@ -146,7 +148,7 @@ object OcrProcessor {
         uri: Uri,
         apiKey: String,
         model: String
-    ): Result<Unit> = withActiveJob {
+    ): Result<GeminiOcrResult> = withActiveJob {
         withContext(Dispatchers.IO) {
             try {
                 // [UnreadableImageException] rather than a plain one for both:
@@ -213,7 +215,7 @@ object OcrProcessor {
                     }
                 }
 
-                Result.success(Unit)
+                Result.success(geminiResult)
             } catch (e: CancellationException) {
                 throw e // cancellation must propagate, not surface as a failed OCR
             } catch (e: Exception) {

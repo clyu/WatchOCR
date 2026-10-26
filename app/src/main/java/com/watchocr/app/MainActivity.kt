@@ -133,10 +133,13 @@ fun WatchOcrApp(ocrViewModel: ManualOcrViewModel = viewModel()) {
     // on them alone, the fixed service would stay stopped until the next resume.
     // Every other landed change gets a start too, which costs little: the text
     // fields' writes are debounced, and reconcileMonitor returns early for a loop
-    // already watching the same folder. The path change still restarts the loop,
-    // and is still the only thing that starts the service for a folder change —
-    // the settings picker starts one only for the re-selection of the folder
-    // already stored, whose write DataStore drops without emitting.
+    // already watching the same folder. The overlay settings rely on that start:
+    // reconcileMonitor is what applies them to an overlay already on screen,
+    // taking it down when it is turned off and resizing it for a new height.
+    // The path change still restarts the loop, and is still the only thing that
+    // starts the service for a folder change — the settings picker starts one
+    // only for the re-selection of the folder already stored, whose write
+    // DataStore drops without emitting.
     //
     // null until DataStore's first emission, which is a key value of its own and
     // the "not loaded" branch below.

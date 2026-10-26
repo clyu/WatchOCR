@@ -40,11 +40,20 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.watchocr.app.data.AnalysisItem
 import com.watchocr.app.data.AppDatabase
 import com.watchocr.app.data.OcrRecord
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
+
+/**
+ * The gap between a record card and the edges of the list it sits in. Shared
+ * with [TranslationOverlay], whose panel keeps the same gap from the top and
+ * sides of the screen, so that it sits over another app the way a card sits
+ * in History.
+ */
+val RecordCardMargin = 16.dp
 
 @Composable
 fun HistoryScreen() {
@@ -118,7 +127,7 @@ fun HistoryScreen() {
 
         else -> LazyColumn(
             state = listState,
-            contentPadding = PaddingValues(16.dp),
+            contentPadding = PaddingValues(RecordCardMargin),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.fillMaxSize()
         ) {
@@ -181,15 +190,7 @@ private fun OcrRecordCard(
             // explain would end on a heading over blank space.
             if (record.analysis.isNotEmpty()) {
                 RecordSection("Idiom / Slang Analysis") {
-                    record.analysis.forEachIndexed { index, item ->
-                        val line = if (item.expression.isBlank()) {
-                            item.explanation
-                        } else {
-                            val furigana = item.furigana?.let { " ($it)" }.orEmpty()
-                            "${item.expression}$furigana: ${item.explanation}"
-                        }
-                        Text("${index + 1}. $line", style = MaterialTheme.typography.bodyMedium)
-                    }
+                    AnalysisLines(record.analysis)
                 }
             }
         }
@@ -213,4 +214,26 @@ private fun RecordSection(label: String, content: @Composable () -> Unit) {
     Spacer(Modifier.height(8.dp))
     Text(label, style = MaterialTheme.typography.labelLarge)
     content()
+}
+
+/**
+ * An idiom/slang analysis as one numbered line per item, the single way both an
+ * [OcrRecordCard] and [TranslationOverlay] show one, so the two cannot drift
+ * apart on what a line says. Emits straight into the caller's [Column], like
+ * [RecordSection].
+ *
+ * No color is named: the lines take LocalContentColor, which is what lets the
+ * same text read on the card and on the overlay's dark panel alike.
+ */
+@Composable
+fun AnalysisLines(analysis: List<AnalysisItem>) {
+    analysis.forEachIndexed { index, item ->
+        val line = if (item.expression.isBlank()) {
+            item.explanation
+        } else {
+            val furigana = item.furigana?.let { " ($it)" }.orEmpty()
+            "${item.expression}$furigana: ${item.explanation}"
+        }
+        Text("${index + 1}. $line", style = MaterialTheme.typography.bodyMedium)
+    }
 }

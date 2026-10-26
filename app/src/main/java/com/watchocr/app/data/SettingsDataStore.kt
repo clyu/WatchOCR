@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.MutablePreferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
@@ -46,7 +47,16 @@ data class AppSettings(
     val apiKey: String = "",
     val model: String = DEFAULT_MODEL,
     /** OCR results older than this many days are deleted automatically; 0 = keep forever. */
-    val retentionDays: Int = 0
+    val retentionDays: Int = 0,
+    /**
+     * Whether each result from the watched folder is also shown over the app in
+     * front. Off by default, and only ever the user's intent: it takes effect
+     * only while the "display over other apps" permission is granted, which
+     * system settings can revoke without this changing.
+     */
+    val overlayEnabled: Boolean = false,
+    /** Cap on the overlay's height, as a percentage of the screen's. */
+    val overlayMaxHeightPercent: Int = DEFAULT_OVERLAY_MAX_HEIGHT_PERCENT
 ) {
     /**
      * Whether directory monitoring can run: a folder to watch and an API key
@@ -63,6 +73,13 @@ data class AppSettings(
          * requests actually use.
          */
         const val DEFAULT_MODEL = "gemini-3.5-flash-lite"
+
+        /**
+         * Overlay height cap used when none is configured. Public so the
+         * overlay can start out at the same value before the stored one is
+         * first applied to it.
+         */
+        const val DEFAULT_OVERLAY_MAX_HEIGHT_PERCENT = 40
     }
 }
 
@@ -74,6 +91,8 @@ class SettingsDataStore(private val context: Context) {
         val API_KEY = stringPreferencesKey("api_key")
         val MODEL = stringPreferencesKey("model")
         val RETENTION_DAYS = intPreferencesKey("retention_days")
+        val OVERLAY_ENABLED = booleanPreferencesKey("overlay_enabled")
+        val OVERLAY_MAX_HEIGHT_PERCENT = intPreferencesKey("overlay_max_height_percent")
     }
 
     val settingsFlow: Flow<AppSettings> = context.dataStore.data.map { prefs ->
@@ -93,7 +112,10 @@ class SettingsDataStore(private val context: Context) {
             // Blank counts as unset: clearing the settings field stores "",
             // which would produce a broken request URL.
             model = prefs[Keys.MODEL]?.trim()?.takeUnless { it.isEmpty() } ?: AppSettings.DEFAULT_MODEL,
-            retentionDays = prefs[Keys.RETENTION_DAYS] ?: 0
+            retentionDays = prefs[Keys.RETENTION_DAYS] ?: 0,
+            overlayEnabled = prefs[Keys.OVERLAY_ENABLED] ?: false,
+            overlayMaxHeightPercent = prefs[Keys.OVERLAY_MAX_HEIGHT_PERCENT]
+                ?: AppSettings.DEFAULT_OVERLAY_MAX_HEIGHT_PERCENT
         )
     }
 
@@ -107,6 +129,10 @@ class SettingsDataStore(private val context: Context) {
     suspend fun setModel(model: String) = persist { it[Keys.MODEL] = model }
 
     suspend fun setRetentionDays(days: Int) = persist { it[Keys.RETENTION_DAYS] = days }
+
+    suspend fun setOverlayEnabled(enabled: Boolean) = persist { it[Keys.OVERLAY_ENABLED] = enabled }
+
+    suspend fun setOverlayMaxHeightPercent(percent: Int) = persist { it[Keys.OVERLAY_MAX_HEIGHT_PERCENT] = percent }
 
     /**
      * The one way anything in here writes, so that "once called, the value

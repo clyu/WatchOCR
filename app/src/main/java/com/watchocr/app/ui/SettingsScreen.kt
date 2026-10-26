@@ -1,14 +1,19 @@
 package com.watchocr.app.ui
 
 import android.Manifest
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -18,6 +23,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -37,6 +43,7 @@ import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -49,14 +56,17 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchocr.app.data.AppSettings
 import com.watchocr.app.data.HistoryCleanup
@@ -114,6 +124,15 @@ private val retentionLabels = mapOf(
     7 to "After 7 days",
     30 to "After 30 days"
 )
+
+/** Overlay height caps offered, as percentages of the screen's height. */
+private val overlayHeightChoices = listOf(20, 30, 40, 50, 60, 70, 80)
+
+/**
+ * Built from the value rather than looked up like [retentionLabels], so a
+ * stored height outside [overlayHeightChoices] still reads as what it is.
+ */
+private fun overlayHeightLabel(percent: Int) = "$percent% of the screen"
 
 /**
  * One titled block of the settings list. Emits its children straight into the
@@ -231,6 +250,7 @@ fun SettingsScreen(
     var isQueryingBuckets by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
     var retentionMenuExpanded by remember { mutableStateOf(false) }
+    var overlayHeightMenuExpanded by remember { mutableStateOf(false) }
 
     // Neither text field writes from its onValueChange; both go through this,
     // which is also what makes the last edit land after the field is gone.
@@ -296,6 +316,38 @@ fun SettingsScreen(
             )
             else -> toast("Photo access is required to choose a folder.")
         }
+    }
+
+    // Re-read on every resume rather than once: the permission is granted and
+    // revoked in system settings, away from this screen, and the switch must
+    // not go on claiming an overlay the service will not show.
+    var canDrawOverlays by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
+    LifecycleResumeEffect(Unit) {
+        canDrawOverlays = Settings.canDrawOverlays(context)
+        onPauseOrDispose {}
+    }
+
+    fun writeOverlayEnabled(enabled: Boolean) {
+        scope.launch {
+            runQuietly("overlay setting write failed") { settingsDataStore.setOverlayEnabled(enabled) }
+        }
+    }
+
+    // isRequestingPermission's guard, for the overlay permission's screen: set
+    // from the tap that opens it until the user comes back from it.
+    var isRequestingOverlayPermission by remember { mutableStateOf(false) }
+
+    val overlayPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        isRequestingOverlayPermission = false
+        // That screen reports no result, so whether the user allowed it can only
+        // be read back here. Written either way, so an attempt the user turned
+        // down leaves the setting off rather than armed to switch itself on if
+        // the permission is granted some time later.
+        canDrawOverlays = Settings.canDrawOverlays(context)
+        writeOverlayEnabled(canDrawOverlays)
+        if (!canDrawOverlays) toast("Allow WatchOCR to display over other apps to use the overlay.")
     }
 
     Column(
@@ -389,6 +441,97 @@ fun SettingsScreen(
                         }
                     }
             )
+        }
+
+        SettingsSection("Overlay") {
+            // Off while the permission is missing, whatever is stored: that is
+            // what the service does with it.
+            val overlayOn = settings.overlayEnabled && canDrawOverlays
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                // The whole row toggles rather than just the switch: a bigger
+                // target, and TalkBack reads the description and the state as
+                // one control.
+                modifier = Modifier.toggleable(
+                    value = overlayOn,
+                    role = Role.Switch,
+                    onValueChange = { checked ->
+                        when {
+                            !checked -> writeOverlayEnabled(false)
+                            Settings.canDrawOverlays(context) -> {
+                                canDrawOverlays = true
+                                writeOverlayEnabled(true)
+                            }
+                            isRequestingOverlayPermission -> Unit
+                            else -> {
+                                isRequestingOverlayPermission = true
+                                try {
+                                    overlayPermissionLauncher.launch(
+                                        Intent(
+                                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                            Uri.parse("package:${context.packageName}")
+                                        )
+                                    )
+                                } catch (_: ActivityNotFoundException) {
+                                    // The platform documents that a device may
+                                    // have no such screen to open.
+                                    isRequestingOverlayPermission = false
+                                    toast("This device does not let apps display over other apps.")
+                                }
+                            }
+                        }
+                    }
+                )
+            ) {
+                Text(
+                    "Show each new result from the monitored folder on top of the app you are using. " +
+                        "Tap it to dismiss.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(16.dp))
+                // No handler of its own: the row's toggleable is the control.
+                Switch(checked = overlayOn, onCheckedChange = null)
+            }
+            ExposedDropdownMenuBox(
+                expanded = overlayHeightMenuExpanded,
+                onExpandedChange = { overlayHeightMenuExpanded = it }
+            ) {
+                OutlinedTextField(
+                    value = overlayHeightLabel(settings.overlayMaxHeightPercent),
+                    onValueChange = {},
+                    readOnly = true,
+                    singleLine = true,
+                    label = { Text("Maximum height") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = overlayHeightMenuExpanded) },
+                    modifier = Modifier
+                        .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                        .fillMaxWidth()
+                )
+                ExposedDropdownMenu(
+                    expanded = overlayHeightMenuExpanded,
+                    onDismissRequest = { overlayHeightMenuExpanded = false }
+                ) {
+                    overlayHeightChoices.forEach { percent ->
+                        DropdownMenuItem(
+                            text = { Text(overlayHeightLabel(percent)) },
+                            onClick = {
+                                overlayHeightMenuExpanded = false
+                                // An overlay already on screen resizes once this
+                                // lands: MainActivity starts the service for the
+                                // change, and its reconcile applies it. One that
+                                // does not land leaves the menu showing the stored
+                                // value, as the retention menu does.
+                                scope.launch {
+                                    runQuietly("overlay height write failed") {
+                                        settingsDataStore.setOverlayMaxHeightPercent(percent)
+                                    }
+                                }
+                            }
+                        )
+                    }
+                }
+            }
         }
 
         SettingsSection("Auto-delete History") {
